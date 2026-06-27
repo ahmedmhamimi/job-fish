@@ -143,9 +143,3 @@ The last 3 optimization results are cached in `chrome.storage.local` under the k
 - **No external CDN dependencies.** Zero `<script src="https://...">` tags anywhere.
 - The `cleanJSON` utility in `utils.js` strips markdown fences before parsing, which guards against models wrapping their output in ` ```json ``` ` blocks.
 - `fuzzyApplyLine` in `engine.js` uses a three-pass cascade: exact → trimmed-exact → Jaccard similarity. Threshold is 0.45 — conservative enough to avoid false positives on similar-looking bullets.
-
----
-
-## License
-
-MIT — use freely, contribute back.
