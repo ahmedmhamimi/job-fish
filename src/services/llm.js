@@ -1,18 +1,24 @@
 /**
- * Groq LLM API client for Job Fish. Runs EXCLUSIVELY in the background service worker.
+ * Google Gemini API client for Job Fish. Runs EXCLUSIVELY in the background service worker.
  * Uses a structured-output system prompt: instead of returning a text diff,
  * the model returns a complete JSON object of all mutable resume fields with
  * optimizations applied directly. The template layer handles DOCX/PDF generation.
+ *
+ * Gemini-specific notes:
+ * - Auth: API key passed as query param (?key=...), not a Bearer header.
+ * - responseMimeType: 'application/json' forces clean JSON output — no markdown fences.
+ * - system_instruction is a top-level field, separate from contents[].
+ * - Response text is at candidates[0].content.parts[0].text.
  *
  * - callLLM(jobDescription: string, matchTarget: number) -> object: full pipeline.
  * - _buildSystemPrompt(matchTarget: number) -> string: injects match range into template.
  * - _fetchWithTimeout(url: string, options: object, ms: number) -> Promise<Response>.
  */
 
-import { DEFAULTS, STORAGE_KEYS, ERROR_TYPES } from '../shared/constants.js';
+import { DEFAULTS, GROQ_MODELS, STORAGE_KEYS, ERROR_TYPES } from '../shared/constants.js';
 import { cleanJSON } from '../shared/utils.js';
 
-const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // ---------------------------------------------------------------------------
 // Mutable defaults injected into the system prompt so the model knows
@@ -86,7 +92,7 @@ Only modify the JSON fields listed under CURRENT MUTABLE FIELDS. Return ALL fiel
 ${MUTABLE_DEFAULTS_JSON}
 
 # MANDATORY OUTPUT FORMAT
-Output exactly one raw JSON object — no markdown fences, no preamble, no commentary.
+Return exactly one raw JSON object — no markdown fences, no preamble, no commentary.
 {
   "extractedPrimaryKeywords": ["keyword1", "keyword2", "keyword3"],
   "estimatedTargetMatchScore": "83%",
@@ -131,33 +137,38 @@ export async function callLLM(jobDescription, matchTarget) {
 
   if (!apiKey?.trim()) throw { error: ERROR_TYPES.NO_API_KEY };
 
+  // Resolve per-model limits.
+  const modelConfig = GROQ_MODELS.find(m => m.value === model);
+  const maxTokens   = modelConfig?.maxTokens ?? DEFAULTS.MAX_TOKENS;
+  const jdLimit     = modelConfig?.jdLimit   ?? 8000;
+
   const sysPrompt = _buildSystemPrompt(matchTarget);
   const userMsg   = [
     context ? `[UPLOADED RESUME CONTEXT (for background reference)]:\n${context.slice(0, 4000)}` : '',
-    `[JOB DESCRIPTION]:\n${jobDescription}`,
+    `[JOB DESCRIPTION]:\n${jobDescription.slice(0, jdLimit)}`,
     `[ATS TARGET SCORE]: ${matchTarget}`,
   ].filter(Boolean).join('\n\n---\n\n');
 
+  // Gemini: API key is a query param, not a Bearer header.
+  const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey.trim()}`;
+
   const options = {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey.trim()}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: sysPrompt },
-        { role: 'user',   content: userMsg },
-      ],
-      max_tokens:  DEFAULTS.MAX_TOKENS,
-      temperature: DEFAULTS.TEMPERATURE,
+      system_instruction: { parts: [{ text: sysPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+      generationConfig: {
+        temperature:      DEFAULTS.TEMPERATURE,
+        maxOutputTokens:  maxTokens,
+        responseMimeType: 'application/json', // forces clean JSON — no markdown fences
+      },
     }),
   };
 
   let response;
   try {
-    response = await _fetchWithTimeout(GROQ_ENDPOINT, options, DEFAULTS.FETCH_TIMEOUT_MS);
+    response = await _fetchWithTimeout(url, options, DEFAULTS.FETCH_TIMEOUT_MS);
   } catch (err) {
     if (err.name === 'AbortError') throw { error: ERROR_TYPES.FETCH_TIMEOUT };
     throw { error: ERROR_TYPES.API_ERROR, detail: String(err.message) };
@@ -169,7 +180,8 @@ export async function callLLM(jobDescription, matchTarget) {
   }
 
   const data = await response.json();
-  const raw  = data?.choices?.[0]?.message?.content;
+  // Gemini response shape: candidates[0].content.parts[0].text
+  const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!raw) throw { error: ERROR_TYPES.PARSE_FAILURE, raw: JSON.stringify(data) };
 
   try {

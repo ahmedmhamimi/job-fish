@@ -465,7 +465,7 @@ function _renderError(errorType, message, detail) {
   card.appendChild(msg);
 
   const hintMap = {
-    [ERROR_TYPES.NO_API_KEY]:    'Open Settings (\u2699) and save your Groq API key.',
+    [ERROR_TYPES.NO_API_KEY]:    'Open Settings (\u2699) and save your Gemini API key.',
     [ERROR_TYPES.NO_RESUME]:     'Upload a .docx or paste your resume in Settings.',
     [ERROR_TYPES.PARSE_FAILURE]: 'The model response could not be parsed. Retry \u2014 or switch models in Settings.',
     [ERROR_TYPES.FETCH_TIMEOUT]: 'Request timed out. Check your connection and retry.',
