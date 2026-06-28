@@ -1,33 +1,31 @@
 /**
- * Sidebar controller for Job Fish. Runs in the side panel browser context.
- * Manages all UI interactions, chrome.runtime message passing, and
- * dynamic rendering of diff cards, summary blocks, and error states.
+ * Sidebar controller for Job Fish. Runs in the Chrome Side Panel browser context.
+ * Manages all UI interactions, file upload (DOCX text extraction via JSZip),
+ * chrome.runtime message passing, and dynamic diff rendering.
  *
- * - init() -> Promise<void>: loads settings from storage, wires all event listeners.
- * - _initSettingsToggle() -> void: settings accordion open/close with ARIA state updates.
- * - _initApiKeyField() -> void: show/hide toggle + save-on-click + field clear.
- * - _populateModelSelect(currentModel: string) -> void: builds model option elements.
- * - _initSlider(initialValue: number) -> void: live label update + persist on change.
- * - _initBaseResumeField(initialValue: string) -> void: pre-populates and wires save button.
- * - _initAnalyzeButton() -> void: validates, locks UI, dispatches RUN_ANALYSIS message.
- * - _initDownloadButton() -> void: calls exportResume with current payload on click.
- * - _runAnalysis() -> Promise<void>: full analysis flow with UI state management.
- * - _lockUI() -> void / _unlockUI() -> void: disables/re-enables interactive elements.
- * - _showLoading() -> void / _hideLoading() -> void: loading state visibility.
- * - _renderOutput(payload: object) -> void: orchestrates all output rendering.
- * - _buildSummaryBlock(payload: object) -> HTMLElement: match score + keyword chips + notes.
- * - _buildSkillsCard(skillsAdditions: object[]) -> HTMLElement: skills section diff card.
- * - _buildDiffCard(item: object) -> HTMLElement: single git-diff-style bullet diff card.
- * - _buildReorderCard(reorderPayload: object) -> HTMLElement: section order suggestion card.
- * - _renderError(errorType: string, message: string) -> void: error card in output area.
- * - _clearOutput() -> void: empties output section, disables download button.
- * - _showToast(message: string, type?: string) -> void: ephemeral status notification.
- * - _sendMsg(type: string, payload?: any) -> Promise<object>: promisified chrome.runtime.sendMessage.
- * - _el(id: string) -> HTMLElement: getElementById shorthand.
+ * Architecture change in v2: the LLM now returns a structured mutable-fields JSON
+ * (not a free-form diff). Diffs are computed here by comparing MUTABLE_DEFAULTS
+ * against the LLM output before rendering the git-diff-style cards.
+ *
+ * Key functions:
+ * - init() -> Promise<void>: loads settings, wires all event listeners.
+ * - _initFileUpload() -> void: triggers file picker, extracts DOCX text via JSZip.
+ * - _extractDocxText(file: File) -> Promise<string>: unzips DOCX, strips XML tags.
+ * - _runAnalysis() -> Promise<void>: validates JD, calls LLM, renders output.
+ * - _computeDiffs(payload: object) -> object[]: compares MUTABLE_DEFAULTS vs LLM output.
+ * - _renderOutput(payload: object) -> void: summary block + diff cards.
+ * - _buildDiffCard(item: object) -> HTMLElement: git-diff-style card element.
+ * - _renderError(type: string, msg: string, detail?: string) -> void: error card.
  */
 
-import { Engine }        from '../core/engine.js';
-import { exportResume }  from '../services/exporter.js';
+import { Engine }           from '../core/engine.js';
+import { downloadDocx, downloadPdf } from '../services/exporter.js';
+import {
+  MUTABLE_DEFAULTS,
+  EXPERIENCE_LABELS,
+  PROJECT_LABELS,
+  SKILL_LABELS,
+} from '../template/resume-data.js';
 import {
   MSG,
   GROQ_MODELS,
@@ -36,238 +34,238 @@ import {
   DEFAULTS,
 } from '../shared/constants.js';
 
-// ---------------------------------------------------------------------------
-// Module-level state
-// ---------------------------------------------------------------------------
+// ── Module state ─────────────────────────────────────────────────────────────
+const engine       = new Engine();
+let currentPayload = null;
+let isAnalyzing    = false;
+let toastTimer     = null;
 
-const engine = new Engine();
-let currentPayload   = null;
-let isAnalyzing      = false;
-let toastTimer       = null;
-let reorderAccepted  = false;
-
-// ---------------------------------------------------------------------------
-// Bootstrap
-// ---------------------------------------------------------------------------
-
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function init() {
   _populateModelSelect(DEFAULTS.MODEL);
   _initSettingsToggle();
   _initApiKeyField();
   _initSlider(DEFAULTS.MATCH_TARGET);
+  _initFileUpload();
+  _initBaseResumeField('');
   _initAnalyzeButton();
-  _initDownloadButton();
+  _initDownloadButtons();
 
   try {
     const res = await _sendMsg(MSG.GET_SETTINGS);
     if (res?.ok && res.data) {
       const { hasApiKey, endpoint, baseResume, matchTarget } = res.data;
-
       _populateModelSelect(endpoint);
-      _initBaseResumeField(baseResume);
       _initSlider(matchTarget);
-
-      // Show a subtle indicator if API key is already saved.
+      _initBaseResumeField(baseResume);
       if (hasApiKey) {
-        const status = _el('apiKeyStatus');
-        status.textContent = '✓ Key saved';
-        status.classList.add('is-visible');
+        const st = _el('apiKeyStatus');
+        st.textContent = '✓ Key saved';
+        st.classList.add('is-visible');
       }
     }
   } catch (_) {
-    _showToast('Could not connect to the background worker. Try reloading.', 'error');
+    _showToast('Could not reach background worker — try reloading.', 'error');
   }
 }
 
-// ---------------------------------------------------------------------------
-// Settings Toggle
-// ---------------------------------------------------------------------------
-
+// ── Settings Toggle ───────────────────────────────────────────────────────────
 function _initSettingsToggle() {
   const toggle  = _el('settingsToggle');
   const wrapper = _el('settingsWrapper');
-
   toggle.addEventListener('click', () => {
-    const isOpen = wrapper.classList.toggle('is-open');
-    toggle.setAttribute('aria-expanded', String(isOpen));
+    const open = wrapper.classList.toggle('is-open');
+    toggle.setAttribute('aria-expanded', String(open));
   });
 }
 
-// ---------------------------------------------------------------------------
-// API Key Field
-// ---------------------------------------------------------------------------
-
+// ── API Key ───────────────────────────────────────────────────────────────────
 function _initApiKeyField() {
-  const revealBtn  = _el('revealApiKey');
-  const input      = _el('apiKeyInput');
-  const saveBtn    = _el('saveApiKey');
-  const statusEl   = _el('apiKeyStatus');
+  const reveal = _el('revealApiKey');
+  const input  = _el('apiKeyInput');
+  const save   = _el('saveApiKey');
+  const status = _el('apiKeyStatus');
 
-  revealBtn.addEventListener('click', () => {
-    const isShowing = input.type === 'text';
-    input.type = isShowing ? 'password' : 'text';
-    revealBtn.setAttribute('aria-pressed', String(!isShowing));
+  reveal.addEventListener('click', () => {
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    reveal.setAttribute('aria-pressed', String(!showing));
   });
 
-  saveBtn.addEventListener('click', async () => {
+  save.addEventListener('click', async () => {
     const key = input.value.trim();
-    if (!key) {
-      _showStatus(statusEl, '✗ Enter a key', true);
-      return;
-    }
-    saveBtn.disabled = true;
+    if (!key) { _showStatus(status, '✗ Enter a key', true); return; }
+    save.disabled = true;
     const res = await _sendMsg(MSG.SAVE_API_KEY, key);
-    saveBtn.disabled = false;
-
+    save.disabled = false;
     if (res?.ok) {
-      input.value = '';
-      input.type  = 'password';
-      revealBtn.setAttribute('aria-pressed', 'false');
-      _showStatus(statusEl, '✓ Key saved');
-      _showToast('API key saved successfully', 'success');
+      input.value = ''; input.type = 'password';
+      reveal.setAttribute('aria-pressed', 'false');
+      _showStatus(status, '✓ Saved');
+      _showToast('API key saved', 'success');
     } else {
-      _showStatus(statusEl, '✗ Failed to save', true);
+      _showStatus(status, '✗ Failed', true);
     }
   });
 }
 
-// ---------------------------------------------------------------------------
-// Model Selector
-// ---------------------------------------------------------------------------
-
-function _populateModelSelect(currentModel) {
+// ── Model Selector ────────────────────────────────────────────────────────────
+function _populateModelSelect(current) {
   const select = _el('modelSelect');
   select.innerHTML = '';
-
-  for (const model of GROQ_MODELS) {
+  for (const m of GROQ_MODELS) {
     const opt = document.createElement('option');
-    opt.value       = model.value;
-    opt.textContent = model.label;
-    opt.selected    = model.value === currentModel;
+    opt.value = m.value; opt.textContent = m.label; opt.selected = m.value === current;
     select.appendChild(opt);
   }
-
-  select.addEventListener('change', () => {
-    _sendMsg(MSG.SAVE_SETTINGS, { endpoint: select.value });
-  });
+  select.addEventListener('change', () =>
+    _sendMsg(MSG.SAVE_SETTINGS, { endpoint: select.value }));
 }
 
-// ---------------------------------------------------------------------------
-// ATS Match Slider
-// ---------------------------------------------------------------------------
-
-function _initSlider(initialValue) {
-  const slider     = _el('matchSlider');
-  const valueLabel = _el('sliderValue');
-
-  slider.value = initialValue;
-  valueLabel.textContent = `${initialValue}%`;
-  slider.setAttribute('aria-valuenow', String(initialValue));
-
+// ── ATS Match Slider ──────────────────────────────────────────────────────────
+function _initSlider(val) {
+  const slider = _el('matchSlider');
+  const label  = _el('sliderValue');
+  slider.value = val; label.textContent = `${val}%`;
+  slider.setAttribute('aria-valuenow', String(val));
   slider.addEventListener('input', () => {
-    const v = Number(slider.value);
-    valueLabel.textContent = `${v}%`;
-    slider.setAttribute('aria-valuenow', String(v));
+    label.textContent = `${slider.value}%`;
+    slider.setAttribute('aria-valuenow', slider.value);
   });
+  slider.addEventListener('change', () =>
+    _sendMsg(MSG.SAVE_SETTINGS, { matchTarget: Number(slider.value) }));
+}
 
-  slider.addEventListener('change', () => {
-    _sendMsg(MSG.SAVE_SETTINGS, { matchTarget: Number(slider.value) });
+// ── Base Resume Field ─────────────────────────────────────────────────────────
+function _initBaseResumeField(text) {
+  const ta     = _el('baseResume');
+  const save   = _el('saveResume');
+  const status = _el('resumeStatus');
+  if (text) ta.value = text;
+  save.addEventListener('click', async () => {
+    const val = ta.value.trim();
+    if (!val) { _showStatus(status, '✗ Empty', true); return; }
+    save.disabled = true;
+    const res = await _sendMsg(MSG.SAVE_RESUME, val);
+    save.disabled = false;
+    res?.ok ? _showStatus(status, '✓ Saved') : _showStatus(status, '✗ Failed', true);
   });
 }
 
-// ---------------------------------------------------------------------------
-// Base Resume Field
-// ---------------------------------------------------------------------------
+// ── File Upload ───────────────────────────────────────────────────────────────
+function _initFileUpload() {
+  const input   = _el('resumeFileInput');
+  const trigger = _el('uploadResumeBtn');
+  const status  = _el('uploadStatus');
 
-function _initBaseResumeField(initialValue) {
-  const textarea = _el('baseResume');
-  const saveBtn  = _el('saveResume');
-  const statusEl = _el('resumeStatus');
+  trigger.addEventListener('click', () => input.click());
 
-  if (initialValue) textarea.value = initialValue;
-
-  saveBtn.addEventListener('click', async () => {
-    const text = textarea.value.trim();
-    if (!text) {
-      _showStatus(statusEl, '✗ Resume is empty', true);
-      return;
-    }
-    saveBtn.disabled = true;
-    const res = await _sendMsg(MSG.SAVE_RESUME, text);
-    saveBtn.disabled = false;
-
-    if (res?.ok) {
-      _showStatus(statusEl, '✓ Saved');
-      _showToast('Base resume saved', 'success');
-    } else {
-      _showStatus(statusEl, '✗ Failed', true);
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    trigger.disabled = true;
+    _showStatus(status, '⏳ Reading…');
+    try {
+      const text = await _extractDocxText(file);
+      _el('baseResume').value = text;
+      const res = await _sendMsg(MSG.SAVE_RESUME, text);
+      if (res?.ok) {
+        _showStatus(status, `✓ ${file.name} loaded`);
+        _showToast('Resume uploaded and saved', 'success');
+      } else {
+        _showStatus(status, '✗ Save failed', true);
+      }
+    } catch (err) {
+      _showStatus(status, `✗ ${err.message}`, true);
+      _showToast('Could not read file — make sure it is a .docx', 'error');
+    } finally {
+      trigger.disabled = false;
+      input.value = '';
     }
   });
 }
 
-// ---------------------------------------------------------------------------
-// Analyze Button
-// ---------------------------------------------------------------------------
+/**
+ * Extracts plain text from a .docx file using JSZip.
+ * Reads word/document.xml, strips OOXML tags, preserves paragraph breaks.
+ */
+async function _extractDocxText(file) {
+  if (!window.JSZip) throw new Error('JSZip not loaded');
+  const buffer = await file.arrayBuffer();
+  const zip    = await window.JSZip.loadAsync(buffer);
+  const entry  = zip.file('word/document.xml');
+  if (!entry) throw new Error('Invalid .docx: word/document.xml missing');
+  const xml = await entry.async('string');
 
+  return xml
+    .replace(/<w:p[ >]/g,    '\n')    // paragraph → newline
+    .replace(/<w:br[^>]*>/g,  '\n')   // line break → newline
+    .replace(/<w:tab[^>]*/g,  '\t')   // tab → tab
+    .replace(/<[^>]+>/g,       '')    // strip remaining tags
+    .replace(/&amp;/g,  '&')
+    .replace(/&lt;/g,   '<')
+    .replace(/&gt;/g,   '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// ── Analyze Button ────────────────────────────────────────────────────────────
 function _initAnalyzeButton() {
   _el('analyzeBtn').addEventListener('click', () => {
     if (!isAnalyzing) _runAnalysis();
   });
 }
 
-// ---------------------------------------------------------------------------
-// Download Button
-// ---------------------------------------------------------------------------
-
-function _initDownloadButton() {
-  _el('downloadBtn').addEventListener('click', () => {
+// ── Download Buttons ──────────────────────────────────────────────────────────
+function _initDownloadButtons() {
+  _el('downloadDocxBtn').addEventListener('click', async () => {
     if (!currentPayload) return;
-    const baseResume = _el('baseResume').value.trim();
-
-    if (!baseResume) {
-      _showToast('Base resume not found in settings. Please save it first.', 'error');
-      return;
+    try {
+      await downloadDocx(currentPayload);
+      _showToast('DOCX download started', 'success');
+    } catch (err) {
+      _showToast(`DOCX error: ${err.message}`, 'error');
     }
+  });
 
-    exportResume(baseResume, currentPayload, reorderAccepted);
-    _showToast('Download started', 'success');
+  _el('downloadPdfBtn').addEventListener('click', () => {
+    if (!currentPayload) return;
+    try {
+      downloadPdf(currentPayload);
+      _showToast('PDF download started', 'success');
+    } catch (err) {
+      _showToast(`PDF error: ${err.message}`, 'error');
+    }
   });
 }
 
-// ---------------------------------------------------------------------------
-// Analysis Flow
-// ---------------------------------------------------------------------------
-
+// ── Analysis Flow ─────────────────────────────────────────────────────────────
 async function _runAnalysis() {
-  const jobDescription = _el('jobDescription').value.trim();
-  const matchTarget    = Number(_el('matchSlider').value);
-  const baseResume     = _el('baseResume').value.trim();
+  const jd     = _el('jobDescription').value.trim();
+  const target = Number(_el('matchSlider').value);
 
-  // Client-side validation using the Engine.
-  const validation = engine.validate(baseResume, jobDescription);
-  if (!validation.valid) {
-    _showToast(ERROR_MESSAGES[validation.error] || 'Validation failed.', 'error');
-    return;
+  if (!jd || jd.length < 20) {
+    _showToast('Please paste a job description first.', 'error'); return;
   }
 
-  _lockUI();
-  _showLoading();
-  _clearOutput();
+  _lockUI(); _showLoading(); _clearOutput();
 
   try {
-    const res = await _sendMsg(MSG.RUN_ANALYSIS, { jobDescription, matchTarget });
-
+    const res = await _sendMsg(MSG.RUN_ANALYSIS, { jobDescription: jd, matchTarget: target });
     if (res?.ok && res.data) {
       _renderOutput(res.data);
       _showToast('Analysis complete', 'success');
     } else {
-      _renderError(res?.error || ERROR_TYPES.API_ERROR, res?.message || ERROR_MESSAGES.API_ERROR);
+      _renderError(res?.error || ERROR_TYPES.API_ERROR, res?.message || ERROR_MESSAGES.API_ERROR, res?.detail || res?.raw);
     }
   } catch (err) {
-    _renderError(ERROR_TYPES.API_ERROR, 'Failed to communicate with the background worker. Try reloading the extension.');
+    _renderError(ERROR_TYPES.API_ERROR, 'Failed to communicate with the background worker. Try reloading the extension.', err.message);
   } finally {
-    _hideLoading();
-    _unlockUI();
+    _hideLoading(); _unlockUI();
   }
 }
 
@@ -295,64 +293,46 @@ function _hideLoading() {
   _el('loadingState').setAttribute('aria-hidden', 'true');
 }
 
-// ---------------------------------------------------------------------------
-// Output Rendering
-// ---------------------------------------------------------------------------
-
+// ── Output Rendering ──────────────────────────────────────────────────────────
 function _renderOutput(payload) {
-  currentPayload  = payload;
-  reorderAccepted = false;
+  currentPayload = payload;
   engine.setState(payload);
-
   const container = _el('outputSection');
 
-  // 1. Summary block.
+  // 1. Summary block (keywords, score, notes)
   container.appendChild(_buildSummaryBlock(payload));
 
-  // 2. Skills section additions.
-  if (payload.skillsSectionAdditions?.length > 0) {
-    container.appendChild(_buildSkillsCard(payload.skillsSectionAdditions));
-  }
-
-  // 3. Modified bullet diff cards.
-  const bullets = payload.modifiedBulletPoints || [];
-  if (bullets.length > 0) {
-    // Section label + count.
-    const headerRow = document.createElement('div');
-    headerRow.className = 'cards-section-header';
-    headerRow.textContent = 'Modified Bullets ';
-    const countBadge = document.createElement('span');
-    countBadge.className = 'cards-count-badge';
-    countBadge.textContent = String(bullets.length);
-    headerRow.appendChild(countBadge);
-    container.appendChild(headerRow);
-
-    for (const item of bullets) {
-      container.appendChild(_buildDiffCard(item));
-    }
+  // 2. Diff cards — computed by comparing defaults vs LLM output
+  const diffs = _computeDiffs(payload);
+  if (diffs.length > 0) {
+    const hdr = document.createElement('div');
+    hdr.className = 'cards-section-header';
+    hdr.textContent = 'Modified Fields ';
+    const badge = document.createElement('span');
+    badge.className = 'cards-count-badge';
+    badge.textContent = String(diffs.length);
+    hdr.appendChild(badge);
+    container.appendChild(hdr);
+    diffs.forEach(d => container.appendChild(_buildDiffCard(d)));
   } else {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No modifications needed — your resume already covers the target stack.';
+    empty.textContent = 'No modifications needed — your resume already covers the target stack for this role.';
     container.appendChild(empty);
   }
 
-  // 4. Section reorder suggestion.
-  if (payload.sectionReorderSuggestion?.suggested) {
-    container.appendChild(_buildReorderCard(payload.sectionReorderSuggestion));
+  // Enable download buttons
+  for (const id of ['downloadDocxBtn', 'downloadPdfBtn']) {
+    const btn = _el(id);
+    btn.disabled = false;
+    btn.removeAttribute('aria-disabled');
   }
-
-  // Enable download button.
-  const dlBtn = _el('downloadBtn');
-  dlBtn.disabled = false;
-  dlBtn.removeAttribute('aria-disabled');
 }
 
 function _buildSummaryBlock(payload) {
   const block = document.createElement('div');
   block.className = 'summary-block';
 
-  // Header row with score.
   const header = document.createElement('div');
   header.className = 'summary-header';
   const title = document.createElement('span');
@@ -361,264 +341,164 @@ function _buildSummaryBlock(payload) {
   const score = document.createElement('span');
   score.className = 'match-score';
   score.textContent = payload.estimatedTargetMatchScore || '—';
-  header.appendChild(title);
-  header.appendChild(score);
+  header.appendChild(title); header.appendChild(score);
   block.appendChild(header);
 
   const body = document.createElement('div');
   body.className = 'summary-body';
 
-  // Primary keywords.
-  const keywords = payload.extractedPrimaryKeywords || [];
-  const titleWeighted = new Set(payload.titleWeightedKeywords || []);
-  if (keywords.length > 0) {
-    const kwLabel = document.createElement('div');
-    kwLabel.className = 'kw-section-label';
-    kwLabel.textContent = 'Primary Keywords';
-    body.appendChild(kwLabel);
-
+  if ((payload.extractedPrimaryKeywords || []).length > 0) {
+    const lbl = document.createElement('div');
+    lbl.className = 'kw-section-label'; lbl.textContent = 'Primary Keywords';
+    body.appendChild(lbl);
     const chips = document.createElement('div');
     chips.className = 'kw-chips';
-    for (const kw of keywords) {
+    for (const kw of payload.extractedPrimaryKeywords) {
       const chip = document.createElement('span');
-      chip.className = titleWeighted.has(kw)
-        ? 'kw-chip kw-chip--title'
-        : 'kw-chip';
-      chip.textContent = kw;
+      chip.className = 'kw-chip'; chip.textContent = kw;
       chips.appendChild(chip);
     }
     body.appendChild(chips);
   }
 
-  // Optimizer notes.
   if (payload.optimizerNotes) {
-    const notesEl = document.createElement('p');
-    notesEl.className = 'summary-notes';
-    notesEl.textContent = payload.optimizerNotes;
-    body.appendChild(notesEl);
+    const notes = document.createElement('p');
+    notes.className = 'summary-notes'; notes.textContent = payload.optimizerNotes;
+    body.appendChild(notes);
   }
 
   block.appendChild(body);
   return block;
 }
 
-function _buildSkillsCard(skillsAdditions) {
-  const card = document.createElement('div');
-  card.className = 'skills-card';
+/**
+ * Computes structural diff between MUTABLE_DEFAULTS and the LLM payload.
+ * Returns array of {section, originalLine, optimizedLine} objects.
+ */
+function _computeDiffs(payload) {
+  const diffs = [];
+  const def   = MUTABLE_DEFAULTS;
+  const norm  = s => String(s || '').replace(/\s+/g, ' ').trim();
 
-  const cardHeader = document.createElement('div');
-  cardHeader.className = 'skills-card-header';
-  cardHeader.textContent = `Skills Section — ${skillsAdditions.length} Suggestion${skillsAdditions.length > 1 ? 's' : ''}`;
-  card.appendChild(cardHeader);
-
-  for (const item of skillsAdditions) {
-    const row = document.createElement('div');
-    row.className = 'skills-item';
-
-    const oldLine = document.createElement('div');
-    oldLine.className = 'skills-old';
-    oldLine.textContent = item.existingSkillLine || '';
-    row.appendChild(oldLine);
-
-    const newLine = document.createElement('div');
-    newLine.className = 'skills-new';
-    newLine.textContent = item.suggestedSkillLine || '';
-    row.appendChild(newLine);
-
-    if (item.justification) {
-      const just = document.createElement('div');
-      just.className = 'skills-just';
-      just.textContent = item.justification;
-      row.appendChild(just);
-    }
-
-    card.appendChild(row);
+  // Summary
+  if (payload.summary && norm(payload.summary) !== norm(def.summary)) {
+    diffs.push({ section: 'Professional Summary', originalLine: def.summary, optimizedLine: payload.summary });
   }
 
-  return card;
+  // Skills (languagesSpoken is immutable, handled by template)
+  for (const [key, label] of Object.entries(SKILL_LABELS)) {
+    const newVal = payload.skills?.[key];
+    if (newVal && norm(newVal) !== norm(def.skills[key])) {
+      diffs.push({ section: `Technical Skills — ${label}`, originalLine: def.skills[key], optimizedLine: newVal });
+    }
+  }
+
+  // Experience bullets
+  for (const [roleId, roleLabel] of Object.entries(EXPERIENCE_LABELS)) {
+    const origArr = def.experienceBullets[roleId] || [];
+    const newArr  = payload.experienceBullets?.[roleId] || origArr;
+    origArr.forEach((orig, i) => {
+      const next = newArr[i];
+      if (next && norm(next) !== norm(orig)) {
+        diffs.push({ section: `Work Experience — ${roleLabel}`, originalLine: orig, optimizedLine: next });
+      }
+    });
+  }
+
+  // Project bullets
+  for (const [projId, projLabel] of Object.entries(PROJECT_LABELS)) {
+    const origArr = def.projectBullets[projId] || [];
+    const newArr  = payload.projectBullets?.[projId] || origArr;
+    origArr.forEach((orig, i) => {
+      const next = newArr[i];
+      if (next && norm(next) !== norm(orig)) {
+        diffs.push({ section: `Projects — ${projLabel}`, originalLine: orig, optimizedLine: next });
+      }
+    });
+  }
+
+  return diffs;
 }
 
 function _buildDiffCard(item) {
   const card = document.createElement('div');
   card.className = 'diff-card';
 
-  // Section label.
-  const sectionLabel = document.createElement('div');
-  sectionLabel.className = 'diff-section-label';
-  sectionLabel.textContent = item.section || 'Unknown Section';
-  card.appendChild(sectionLabel);
+  const sec = document.createElement('div');
+  sec.className = 'diff-section-label'; sec.textContent = item.section || '';
+  card.appendChild(sec);
 
-  // Removed (original) line.
-  const removedLine = document.createElement('div');
-  removedLine.className = 'diff-line diff-line--removed';
+  // Removed line
+  const rem = document.createElement('div');
+  rem.className = 'diff-line diff-line--removed';
   const minusSpan = document.createElement('span');
-  minusSpan.className = 'diff-prefix';
-  minusSpan.setAttribute('aria-hidden', 'true');
-  minusSpan.textContent = '-';
-  const removedText = document.createElement('span');
-  removedText.className = 'diff-text';
-  removedText.textContent = item.originalLine || '';
-  removedLine.appendChild(minusSpan);
-  removedLine.appendChild(removedText);
-  card.appendChild(removedLine);
+  minusSpan.className = 'diff-prefix'; minusSpan.setAttribute('aria-hidden','true'); minusSpan.textContent = '-';
+  const remText = document.createElement('span');
+  remText.className = 'diff-text'; remText.textContent = item.originalLine || '';
+  rem.appendChild(minusSpan); rem.appendChild(remText);
+  card.appendChild(rem);
 
-  // Added (optimized) line.
-  const addedLine = document.createElement('div');
-  addedLine.className = 'diff-line diff-line--added';
+  // Added line
+  const add = document.createElement('div');
+  add.className = 'diff-line diff-line--added';
   const plusSpan = document.createElement('span');
-  plusSpan.className = 'diff-prefix';
-  plusSpan.setAttribute('aria-hidden', 'true');
-  plusSpan.textContent = '+';
-  const addedText = document.createElement('span');
-  addedText.className = 'diff-text';
-  addedText.textContent = item.optimizedLine || '';
-  addedLine.appendChild(plusSpan);
-  addedLine.appendChild(addedText);
-  card.appendChild(addedLine);
-
-  // Justification accordion.
-  const details = document.createElement('details');
-  details.className = 'diff-justification';
-
-  const summary = document.createElement('summary');
-  summary.className = 'diff-justification-summary';
-
-  // Chevron icon.
-  const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  chevron.setAttribute('viewBox', '0 0 10 10');
-  chevron.setAttribute('fill', 'none');
-  chevron.setAttribute('aria-hidden', 'true');
-  chevron.classList.add('diff-chevron');
-  const chevronPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  chevronPath.setAttribute('d', 'M3 2l4 3-4 3');
-  chevronPath.setAttribute('stroke', 'currentColor');
-  chevronPath.setAttribute('stroke-width', '1.5');
-  chevronPath.setAttribute('stroke-linecap', 'round');
-  chevronPath.setAttribute('stroke-linejoin', 'round');
-  chevron.appendChild(chevronPath);
-
-  const summaryText = document.createTextNode('Justification ');
-
-  // Confidence badge.
-  const confidence  = (item.confidence || 'medium').toLowerCase();
-  const confBadge   = document.createElement('span');
-  confBadge.className = `badge badge--${confidence}`;
-  confBadge.textContent = confidence;
-
-  summary.appendChild(chevron);
-  summary.appendChild(summaryText);
-  summary.appendChild(confBadge);
-
-  const justText = document.createElement('p');
-  justText.className = 'diff-justification-text';
-  justText.textContent = item.justification || '';
-
-  details.appendChild(summary);
-  details.appendChild(justText);
-  card.appendChild(details);
+  plusSpan.className = 'diff-prefix'; plusSpan.setAttribute('aria-hidden','true'); plusSpan.textContent = '+';
+  const addText = document.createElement('span');
+  addText.className = 'diff-text'; addText.textContent = item.optimizedLine || '';
+  add.appendChild(plusSpan); add.appendChild(addText);
+  card.appendChild(add);
 
   return card;
 }
 
-function _buildReorderCard(reorderPayload) {
-  const card = document.createElement('div');
-  card.className = 'reorder-card';
-
-  const title = document.createElement('div');
-  title.className = 'reorder-title';
-  title.textContent = '⚡ Section Order Suggestion';
-  card.appendChild(title);
-
-  const reason = document.createElement('p');
-  reason.className = 'reorder-reason';
-  reason.textContent = reorderPayload.reason || '';
-  card.appendChild(reason);
-
-  if (Array.isArray(reorderPayload.recommendedOrder)) {
-    const label = document.createElement('div');
-    label.className = 'kw-section-label';
-    label.textContent = 'Recommended order:';
-    card.appendChild(label);
-
-    const orderRow = document.createElement('div');
-    orderRow.className = 'reorder-order';
-    for (const section of reorderPayload.recommendedOrder) {
-      const item = document.createElement('span');
-      item.className = 'reorder-order-item';
-      item.textContent = section;
-      orderRow.appendChild(item);
-    }
-    card.appendChild(orderRow);
-  }
-
-  // Checkbox to apply reorder on export.
-  const checkLabel = document.createElement('label');
-  checkLabel.className = 'reorder-label';
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.checked = false;
-  checkbox.addEventListener('change', () => {
-    reorderAccepted = checkbox.checked;
-  });
-  checkLabel.appendChild(checkbox);
-  checkLabel.appendChild(document.createTextNode('Apply reorder when downloading'));
-  card.appendChild(checkLabel);
-
-  return card;
-}
-
-function _renderError(errorType, message) {
+function _renderError(errorType, message, detail) {
   const container = _el('outputSection');
-
   const card = document.createElement('div');
   card.className = 'error-card';
 
-  const typeLabel = document.createElement('div');
-  typeLabel.className = 'error-type-label';
-  typeLabel.textContent = errorType || 'ERROR';
-  card.appendChild(typeLabel);
+  const type = document.createElement('div');
+  type.className = 'error-type-label'; type.textContent = errorType || 'ERROR';
+  card.appendChild(type);
 
-  const msgEl = document.createElement('p');
-  msgEl.className = 'error-message';
-  msgEl.textContent = message || 'An unexpected error occurred.';
-  card.appendChild(msgEl);
+  const msg = document.createElement('p');
+  msg.className = 'error-message'; msg.textContent = message || 'An unexpected error occurred.';
+  card.appendChild(msg);
 
-  // Contextual hint.
   const hintMap = {
-    [ERROR_TYPES.NO_API_KEY]:    'Open Settings (⚙) and save your Groq API key.',
-    [ERROR_TYPES.NO_RESUME]:     'Open Settings (⚙), paste your resume, and click Save Resume.',
-    [ERROR_TYPES.PARSE_FAILURE]: 'The model response could not be parsed. Click Analyze & Optimize to retry.',
-    [ERROR_TYPES.FETCH_TIMEOUT]: 'The request timed out. Check your internet connection and retry.',
-    [ERROR_TYPES.API_ERROR]:     'Check that your Groq API key is valid and has remaining quota.',
+    [ERROR_TYPES.NO_API_KEY]:    'Open Settings (\u2699) and save your Groq API key.',
+    [ERROR_TYPES.NO_RESUME]:     'Upload a .docx or paste your resume in Settings.',
+    [ERROR_TYPES.PARSE_FAILURE]: 'The model response could not be parsed. Retry \u2014 or switch models in Settings.',
+    [ERROR_TYPES.FETCH_TIMEOUT]: 'Request timed out. Check your connection and retry.',
+    [ERROR_TYPES.API_ERROR]:     'If your key is correct, try switching to a different model in Settings.',
   };
-
   const hint = hintMap[errorType];
   if (hint) {
-    const hintEl = document.createElement('p');
-    hintEl.className = 'error-hint';
-    hintEl.textContent = hint;
-    card.appendChild(hintEl);
+    const h = document.createElement('p');
+    h.className = 'error-hint'; h.textContent = hint;
+    card.appendChild(h);
+  }
+
+  if (detail) {
+    const d = document.createElement('div');
+    d.className = 'error-detail'; d.textContent = detail;
+    card.appendChild(d);
   }
 
   container.appendChild(card);
 }
 
 function _clearOutput() {
-  const container = _el('outputSection');
-  container.innerHTML = '';
-  currentPayload  = null;
-  reorderAccepted = false;
+  _el('outputSection').innerHTML = '';
+  currentPayload = null;
   engine.clearState();
-
-  const dlBtn = _el('downloadBtn');
-  dlBtn.disabled = true;
-  dlBtn.setAttribute('aria-disabled', 'true');
+  for (const id of ['downloadDocxBtn', 'downloadPdfBtn']) {
+    const btn = _el(id);
+    btn.disabled = true;
+    btn.setAttribute('aria-disabled', 'true');
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-
+// ── Utility ───────────────────────────────────────────────────────────────────
 function _showStatus(el, text, isError = false) {
   el.textContent = text;
   el.classList.toggle('is-error', isError);
@@ -629,42 +509,22 @@ function _showStatus(el, text, isError = false) {
 function _showToast(message, type = 'success') {
   const toast = _el('toast');
   clearTimeout(toastTimer);
-
   toast.textContent = message;
   toast.className   = `toast toast--${type}`;
   toast.classList.add('is-visible');
-
-  toastTimer = setTimeout(() => {
-    toast.classList.remove('is-visible');
-  }, 3000);
+  toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 3200);
 }
 
-/**
- * Wraps chrome.runtime.sendMessage in a Promise.
- * Resolves with the response object; rejects if chrome.runtime.lastError is set.
- * @param {string} type
- * @param {*}      payload
- * @returns {Promise<object>}
- */
 function _sendMsg(type, payload) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type, payload }, response => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
+      if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
       resolve(response);
     });
   });
 }
 
-function _el(id) {
-  return document.getElementById(id);
-}
+function _el(id) { return document.getElementById(id); }
 
-// ---------------------------------------------------------------------------
-// Entry point — ES modules always defer, so DOM is guaranteed ready here.
-// ---------------------------------------------------------------------------
-init().catch(err => {
-  console.error('[Job Fish] init failed:', err);
-});
+// ── Entry point ───────────────────────────────────────────────────────────────
+init().catch(err => console.error('[Job Fish] init failed:', err));
