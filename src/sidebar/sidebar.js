@@ -1,11 +1,14 @@
 /**
- * Sidebar controller for Job Fish. Runs in the Chrome Side Panel browser context.
+ * Sidebar controller for Job Fish — v3 UI. Runs in the Chrome Side Panel browser context.
  * Manages all UI interactions, file upload (DOCX text extraction via JSZip),
  * chrome.runtime message passing, and dynamic diff rendering.
  *
- * Architecture change in v2: the LLM now returns a structured mutable-fields JSON
- * (not a free-form diff). Diffs are computed here by comparing MUTABLE_DEFAULTS
- * against the LLM output before rendering the git-diff-style cards.
+ * v3 UI additions:
+ * - _initTheme() -> void: dark/light toggle persisted to localStorage.
+ * - _initDrawer() -> void: slide-out settings drawer with scrim.
+ * - _updateResumeBanner(hasResume: bool) -> void: top-of-screen nudge.
+ * - _animateScoreRing(pct: number) -> void: animated SVG arc for ATS score.
+ * - _buildSummaryBlock() now renders a score-ring hero rather than plain text.
  *
  * Key functions:
  * - init() -> Promise<void>: loads settings, wires all event listeners.
@@ -42,8 +45,9 @@ let toastTimer     = null;
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function init() {
+  _initTheme();
+  _initDrawer();
   _populateModelSelect(DEFAULTS.MODEL);
-  _initSettingsToggle();
   _initApiKeyField();
   _initSlider(DEFAULTS.MATCH_TARGET);
   _initFileUpload();
@@ -58,25 +62,91 @@ async function init() {
       _populateModelSelect(endpoint);
       _initSlider(matchTarget);
       _initBaseResumeField(baseResume);
+      const hasResume = !!(baseResume && baseResume.trim());
+      _updateResumeBanner(hasResume);
       if (hasApiKey) {
         const st = _el('apiKeyStatus');
         st.textContent = '✓ Key saved';
         st.classList.add('is-visible');
       }
+    } else {
+      _updateResumeBanner(false);
     }
   } catch (_) {
     _showToast('Could not reach background worker — try reloading.', 'error');
   }
 }
 
-// ── Settings Toggle ───────────────────────────────────────────────────────────
-function _initSettingsToggle() {
-  const toggle  = _el('settingsToggle');
-  const wrapper = _el('settingsWrapper');
-  toggle.addEventListener('click', () => {
-    const open = wrapper.classList.toggle('is-open');
-    toggle.setAttribute('aria-expanded', String(open));
+// ── Theme Toggle ──────────────────────────────────────────────────────────────
+function _initTheme() {
+  const stored = localStorage.getItem('jf-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', stored);
+
+  _el('themeToggle').addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next    = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('jf-theme', next);
   });
+}
+
+// ── Settings Drawer ───────────────────────────────────────────────────────────
+function _initDrawer() {
+  const toggle  = _el('settingsToggle');
+  const drawer  = _el('settingsDrawer');
+  const scrim   = _el('drawerScrim');
+  const close   = _el('drawerClose');
+
+  function openDrawer() {
+    drawer.classList.add('is-open');
+    scrim.classList.add('is-open');
+    toggle.classList.add('is-active');
+    toggle.setAttribute('aria-expanded', 'true');
+    scrim.removeAttribute('aria-hidden');
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('is-open');
+    scrim.classList.remove('is-open');
+    toggle.classList.remove('is-active');
+    toggle.setAttribute('aria-expanded', 'false');
+    scrim.setAttribute('aria-hidden', 'true');
+  }
+
+  toggle.addEventListener('click', () => {
+    drawer.classList.contains('is-open') ? closeDrawer() : openDrawer();
+  });
+
+  close.addEventListener('click', closeDrawer);
+  scrim.addEventListener('click', closeDrawer);
+
+  // Close on Escape
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && drawer.classList.contains('is-open')) closeDrawer();
+  });
+}
+
+// ── Resume Banner ─────────────────────────────────────────────────────────────
+function _updateResumeBanner(hasResume) {
+  const banner = _el('resumeBanner');
+  if (hasResume) {
+    banner.classList.add('is-hidden');
+  } else {
+    banner.classList.remove('is-hidden');
+    banner.onclick = () => {
+      // Open settings drawer
+      const drawer = _el('settingsDrawer');
+      const scrim  = _el('drawerScrim');
+      const toggle = _el('settingsToggle');
+      drawer.classList.add('is-open');
+      scrim.classList.add('is-open');
+      toggle.classList.add('is-active');
+      toggle.setAttribute('aria-expanded', 'true');
+      scrim.removeAttribute('aria-hidden');
+      // Focus the resume textarea
+      setTimeout(() => _el('baseResume').focus(), 320);
+    };
+  }
 }
 
 // ── API Key ───────────────────────────────────────────────────────────────────
@@ -148,7 +218,12 @@ function _initBaseResumeField(text) {
     save.disabled = true;
     const res = await _sendMsg(MSG.SAVE_RESUME, val);
     save.disabled = false;
-    res?.ok ? _showStatus(status, '✓ Saved') : _showStatus(status, '✗ Failed', true);
+    if (res?.ok) {
+      _showStatus(status, '✓ Saved');
+      _updateResumeBanner(true);
+    } else {
+      _showStatus(status, '✗ Failed', true);
+    }
   });
 }
 
@@ -170,8 +245,15 @@ function _initFileUpload() {
       _el('baseResume').value = text;
       const res = await _sendMsg(MSG.SAVE_RESUME, text);
       if (res?.ok) {
-        _showStatus(status, `✓ ${file.name} loaded`);
+        _showStatus(status, `✓ ${file.name}`);
         _showToast('Resume uploaded and saved', 'success');
+        _updateResumeBanner(true);
+        trigger.classList.add('has-file');
+        trigger.innerHTML = `
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          ${file.name}`;
       } else {
         _showStatus(status, '✗ Save failed', true);
       }
@@ -317,7 +399,10 @@ function _renderOutput(payload) {
   } else {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No modifications needed — your resume already covers the target stack for this role.';
+    empty.innerHTML = `
+      <div class="empty-state-icon">🎯</div>
+      <p>You're already well-matched!</p>
+      <span>No modifications needed — your resume covers the target stack for this role.</span>`;
     container.appendChild(empty);
   }
 
@@ -333,29 +418,72 @@ function _buildSummaryBlock(payload) {
   const block = document.createElement('div');
   block.className = 'summary-block';
 
-  const header = document.createElement('div');
-  header.className = 'summary-header';
-  const title = document.createElement('span');
-  title.className = 'summary-title';
-  title.textContent = 'ATS Analysis';
-  const score = document.createElement('span');
-  score.className = 'match-score';
-  score.textContent = payload.estimatedTargetMatchScore || '—';
-  header.appendChild(title); header.appendChild(score);
-  block.appendChild(header);
+  // ── Score hero row ──────────────────────────────────────────
+  const scoreHero = document.createElement('div');
+  scoreHero.className = 'score-hero';
 
+  const rawScore   = payload.estimatedTargetMatchScore || '0%';
+  const pctNum     = parseInt(rawScore, 10) || 0;
+  // Ring geometry: r=34, circumference ≈ 213.6
+  const CIRC       = 213.6;
+  const offset     = CIRC - (pctNum / 100) * CIRC;
+
+  const ringWrap   = document.createElement('div');
+  ringWrap.className = 'score-ring-wrap';
+  ringWrap.innerHTML = `
+    <svg class="score-ring" viewBox="0 0 80 80" fill="none" aria-hidden="true">
+      <circle class="score-ring-track" cx="40" cy="40" r="34"/>
+      <circle class="score-ring-fill" cx="40" cy="40" r="34"
+              stroke-dasharray="${CIRC}"
+              stroke-dashoffset="${CIRC}"
+              data-offset="${offset}"/>
+    </svg>
+    <div class="score-label">
+      <span class="score-number">${pctNum}</span>
+      <span class="score-pct">%</span>
+    </div>`;
+  scoreHero.appendChild(ringWrap);
+
+  const scoreMeta = document.createElement('div');
+  scoreMeta.className = 'score-meta';
+  const scoreTitle = document.createElement('div');
+  scoreTitle.className = 'score-title';
+  scoreTitle.textContent = 'ATS Match Score';
+  const scoreDesc = document.createElement('div');
+  scoreDesc.className = 'score-desc';
+  scoreDesc.textContent = pctNum >= 85
+    ? 'Excellent match — strong alignment with this role.'
+    : pctNum >= 75
+      ? 'Good match — a few tweaks will push you over the top.'
+      : 'Moderate match — apply the suggestions below for best results.';
+  scoreMeta.appendChild(scoreTitle);
+  scoreMeta.appendChild(scoreDesc);
+  scoreHero.appendChild(scoreMeta);
+  block.appendChild(scoreHero);
+
+  // Animate the ring after a short delay
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      const arc = ringWrap.querySelector('.score-ring-fill');
+      if (arc) arc.style.strokeDashoffset = arc.dataset.offset;
+    }, 120);
+  });
+
+  // ── Keywords + notes body ───────────────────────────────────
   const body = document.createElement('div');
   body.className = 'summary-body';
 
   if ((payload.extractedPrimaryKeywords || []).length > 0) {
     const lbl = document.createElement('div');
-    lbl.className = 'kw-section-label'; lbl.textContent = 'Primary Keywords';
+    lbl.className = 'kw-section-label';
+    lbl.textContent = 'Primary Keywords';
     body.appendChild(lbl);
     const chips = document.createElement('div');
     chips.className = 'kw-chips';
     for (const kw of payload.extractedPrimaryKeywords) {
       const chip = document.createElement('span');
-      chip.className = 'kw-chip'; chip.textContent = kw;
+      chip.className = 'kw-chip';
+      chip.textContent = kw;
       chips.appendChild(chip);
     }
     body.appendChild(chips);
@@ -363,7 +491,8 @@ function _buildSummaryBlock(payload) {
 
   if (payload.optimizerNotes) {
     const notes = document.createElement('p');
-    notes.className = 'summary-notes'; notes.textContent = payload.optimizerNotes;
+    notes.className = 'summary-notes';
+    notes.textContent = payload.optimizerNotes;
     body.appendChild(notes);
   }
 
