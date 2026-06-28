@@ -1,14 +1,14 @@
 # Job Fish 🎣
 
 **AI-powered ATS resume optimizer as a Chrome Side Panel extension.**  
-Surgically tailors your resume to any job description using LLaMA (via Groq), presenting changes as a git-diff view and exporting an ATS-clean `.txt` file.
+Surgically tailors your resume to any job description using Gemini, presenting changes as a git-diff view and exporting an ATS-clean `.txt` file.
 
 ---
 
 ## How It Works
 
 1. You paste a job description into the panel.
-2. Job Fish sends your **stored master resume** + the JD to LLaMA via Groq.
+2. Job Fish sends your **stored master resume** + the JD to Gemini.
 3. The model identifies the 3–5 primary tech-stack keywords missing from your resume and proposes **category-level substitutions only** (e.g. `MySQL → PostgreSQL`, never invented skills).
 4. Changes appear as a **git-diff view** — red original / green optimized, with justification and a confidence badge per change.
 5. Click **Download .txt** to get an ATS-clean plain-text resume with all accepted changes applied.
@@ -32,7 +32,7 @@ The target match score is set to **82% by default** (the strategic sweet spot: a
 
 ## First-Time Setup
 
-1. **Get a free Groq API key** at [console.groq.com](https://console.groq.com) — takes ~30 seconds.
+1. **Get a free Gemini API key**, takes ~30 seconds.
 2. Click the **⚙ gear icon** in Job Fish to open Settings.
 3. Paste your API key → click **Save API Key**. The field clears after saving (the key is stored securely in `chrome.storage.local`, never in the UI layer).
 4. Paste your **complete master resume** (plain text) in the **Master Base Resume** field → click **Save Resume**.
@@ -73,7 +73,7 @@ The target match score is set to **82% by default** (the strategic sweet spot: a
 
 ```
 src/                              ← Chrome extension root (load this)
-├── manifest.json                 ← MV3 config: sidePanel, storage, groq host_permissions
+├── manifest.json                 ← MV3 config: sidePanel, storage, Gemini host_permissions
 │
 ├── background/
 │   └── service-worker.js        ← Message router + LLM proxy (API key stays here)
@@ -84,7 +84,7 @@ src/                              ← Chrome extension root (load this)
 │   └── sidebar.js               ← DOM logic, diff card rendering, export trigger
 │
 ├── services/
-│   ├── llm.js                   ← Groq API client (service-worker only)
+│   ├── llm.js                   ← Gemini API client (service-worker only)
 │   └── exporter.js              ← ATS reconstructor + .txt download (sidebar only)
 │
 ├── core/
@@ -100,26 +100,9 @@ src/                              ← Chrome extension root (load this)
     └── icon128.png
 ```
 
-### Security Model
-
-- The **raw API key never touches the sidebar**. It is sent once via `chrome.runtime.sendMessage` → stored in `chrome.storage.local` → read only by the service worker when making API calls.
-- All external HTTP requests go through the **background service worker**, which holds the sole `host_permission` for `https://api.groq.com/*`. The sidebar has no network access.
-- CORS is never an issue because `fetch` runs inside the service worker, not in the page context.
-
 ### Optimization History
 
 The last 3 optimization results are cached in `chrome.storage.local` under the key `optimization_history`. Each entry includes a `_timestamp` field.
-
----
-
-## Supported Models (Groq)
-
-| Model | Best For |
-|---|---|
-| `llama3-70b-8192` | Best quality (default) |
-| `llama-3.3-70b-versatile` | Strong quality, slightly faster |
-| `llama3-8b-8192` | Fastest, good for simple resumes |
-| `mixtral-8x7b-32768` | Long resumes (32K context) |
 
 ---
 
@@ -127,7 +110,7 @@ The last 3 optimization results are cached in `chrome.storage.local` under the k
 
 | Problem | Fix |
 |---|---|
-| "No API key saved" | Open Settings ⚙, paste your Groq API key, click Save |
+| "No API key saved" | Open Settings ⚙, paste your Gemini API key, click Save |
 | "No base resume saved" | Open Settings ⚙, paste resume, click Save Resume |
 | Request timed out | Check your connection; the 30s timeout is generous — retry |
 | Parse failure | Transient model issue — retry; switch to a different model if persistent |
