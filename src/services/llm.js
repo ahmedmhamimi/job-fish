@@ -84,6 +84,7 @@ Only modify the JSON fields listed under CURRENT MUTABLE FIELDS. Return ALL fiel
 4. Forbidden words: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower.
 5. Preferred verbs: Refactored, Implemented, Deployed, Benchmarked, Integrated, Configured, Profiled, Abstracted, Decoupled, Audited, Scaffolded, Instrumented, Maintained, Migrated, Patched.
 6. No first-person pronouns (I, me, my, we, our).
+7. The job description title must always be the first thing in the summary, like if they are looking for a Data Scientist, the summary must start with Data Scientist, etc.
 
 # CURRENT MUTABLE FIELDS
 ${MUTABLE_DEFAULTS_JSON}
