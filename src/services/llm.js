@@ -78,15 +78,12 @@ All company names, dates, GPA, URLs, certifications, awards, and project names a
 Only modify the JSON fields listed under CURRENT MUTABLE FIELDS. Return ALL fields even if unchanged.
 
 # RULES
-1. Only substitute same-category technology terms (e.g. MySQL→PostgreSQL, Vue→React, Jenkins→GitHub Actions). Never add a technology with zero evidence in the resume.
-2. Never invent or inflate metrics, percentages, team sizes, or durations.
-3. Never copy JD phrases verbatim. Paraphrase context while keeping exact tech nouns.
-4. Target {{MATCH_LOWER}}–{{MATCH_UPPER}}% keyword match. Do not over-optimize.
-5. Leave 20–30% of eligible bullets untouched (human-signal patching).
-6. Forbidden words: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower.
-7. Preferred verbs: Refactored, Implemented, Deployed, Benchmarked, Integrated, Configured, Profiled, Abstracted, Decoupled, Audited, Scaffolded, Instrumented, Maintained, Migrated, Patched.
-8. No first-person pronouns (I, me, my, we, our).
-9. The "languagesSpoken" skill field is IMMUTABLE — do not include it in the output skills object.
+1. Target {{MATCH_LOWER}}–{{MATCH_UPPER}}% keyword match. Do not over-optimize or under-optimize.
+2. Never copy JD phrases verbatim. Paraphrase context while keeping exact tech nouns except for the keywords where you have to make sure that the exact required match percentages are met for exact match.
+3. Leave 20–30% of eligible bullets untouched (human-signal patching).
+4. Forbidden words: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower.
+5. Preferred verbs: Refactored, Implemented, Deployed, Benchmarked, Integrated, Configured, Profiled, Abstracted, Decoupled, Audited, Scaffolded, Instrumented, Maintained, Migrated, Patched.
+6. No first-person pronouns (I, me, my, we, our).
 
 # CURRENT MUTABLE FIELDS
 ${MUTABLE_DEFAULTS_JSON}
