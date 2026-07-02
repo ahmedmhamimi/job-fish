@@ -194,6 +194,17 @@ function run(text, opts = {}) {
   return `<w:r>${rpr(opts)}${t}</w:r>`;
 }
 
+// A real clickable hyperlink run. Requires a relationship id (rId) that
+// points at an External target in word/_rels/document.xml.rels — plain
+// <w:r><w:t> runs are NEVER clickable no matter how they're styled, which
+// is why links previously rendered as inert blue-ish text.
+function hyperlinkRun(text, rId, opts = {}) {
+  const t = `<w:t xml:space="preserve">${xe(text)}</w:t>`;
+  return `<w:hyperlink r:id="${rId}" w:history="1"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/>${
+    opts.sz ? `<w:sz w:val="${opts.sz}"/><w:szCs w:val="${opts.sz}"/>` : ''
+  }</w:rPr>${t}</w:r></w:hyperlink>`;
+}
+
 function ppr({ jc, before, after, border, tabs, indL, indH } = {}) {
   let x = '<w:pPr>';
   if (jc)     x += `<w:jc w:val="${jc}"/>`;
@@ -239,25 +250,58 @@ function skillLine(label, value) {
     run(value, { sz: 20 }),
   ], { after: 40 });
 }
-function projHead(name, techStack) {
-  return para([
+function contactLine(text) {
+  return para([run(text, { sz: 19 })], { jc: 'center', after: 30 });
+}
+// Like contactLine, but for a centered paragraph made of several runs,
+// some of which may be hyperlinkRun(...) — needed to mix plain separators
+// with clickable link text on the same line.
+function contactLineMixed(runsXml) {
+  return `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="30"/></w:pPr>${runsXml.join('')}</w:p>`;
+}
+
+// urlToRid: Map<url, rId> — when a project has a url and it's present in the
+// map, its urlLabel is appended as a real clickable hyperlink run.
+function projHead(name, techStack, urlLabel, url, urlToRid) {
+  const runs = [
     run(name, { b: true, sz: 21 }),
     run('  |  ' + techStack, { sz: 20 }),
-  ], { before: 100, after: 30 });
+  ];
+  if (url && urlLabel && urlToRid?.has(url)) {
+    runs.push(run('  |  ', { sz: 20 }));
+    runs.push(hyperlinkRun(urlLabel, urlToRid.get(url), { sz: 20 }));
+  }
+  return para(runs, { before: 100, after: 30 });
 }
 function bodyPara(text) {
   return para([run(text, { sz: 20 })], { after: 60 });
 }
-function contactLine(text) {
-  return para([run(text, { sz: 19 })], { jc: 'center', after: 30 });
+
+// Collects every URL referenced in the resume (LinkedIn, GitHub, project
+// links) into a deduped Map<url, rId>, starting at rId3 since rId1/rId2 are
+// already reserved for styles.xml/settings.xml in document.xml.rels.
+function collectHyperlinks(d) {
+  const ordered = [];
+  if (d.contact.linkedinUrl) ordered.push(d.contact.linkedinUrl);
+  if (d.contact.githubUrl)   ordered.push(d.contact.githubUrl);
+  for (const p of d.projects) if (p.url) ordered.push(p.url);
+
+  const seen = new Set();
+  const unique = ordered.filter(u => (seen.has(u) ? false : seen.add(u)));
+
+  const map = new Map();
+  unique.forEach((url, i) => map.set(url, `rId${i + 3}`));
+  return map;
 }
 
-function buildDocumentXML(d) {
+function buildDocumentXML(d, urlToRid) {
+
   const NS = [
     'xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"',
     'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"',
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
     'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"',
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
     'mc:Ignorable="w14 wpc"',
   ].join(' ');
 
@@ -267,7 +311,15 @@ function buildDocumentXML(d) {
   parts.push(para([run(d.name, { b: true, sz: 36 })], { jc: 'center', before: 0, after: 60 }));
   // Contact
   parts.push(contactLine(`${d.contact.location}  \u2022  ${d.contact.phone}  \u2022  ${d.contact.email}`));
-  parts.push(contactLine(`${d.contact.linkedinLabel}  \u2022  ${d.contact.githubLabel}`));
+  parts.push(contactLineMixed([
+    d.contact.linkedinUrl && urlToRid.has(d.contact.linkedinUrl)
+      ? hyperlinkRun(d.contact.linkedinLabel, urlToRid.get(d.contact.linkedinUrl), { sz: 19 })
+      : run(d.contact.linkedinLabel, { sz: 19 }),
+    run('  \u2022  ', { sz: 19 }),
+    d.contact.githubUrl && urlToRid.has(d.contact.githubUrl)
+      ? hyperlinkRun(d.contact.githubLabel, urlToRid.get(d.contact.githubUrl), { sz: 19 })
+      : run(d.contact.githubLabel, { sz: 19 }),
+  ]));
   parts.push(empty(80));
 
   // Summary
@@ -299,7 +351,7 @@ function buildDocumentXML(d) {
   // Projects
   parts.push(secHead('PROJECTS'));
   for (const proj of d.projects) {
-    parts.push(projHead(proj.name, proj.techStack));
+    parts.push(projHead(proj.name, proj.techStack, proj.urlLabel, proj.url, urlToRid));
     for (const b of (d.projectBullets[proj.id] || [])) {
       parts.push(bullet(b));
     }
@@ -354,10 +406,16 @@ export async function generateDocxBlob(resumeData) {
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
 </Relationships>`);
 
+  const urlToRid = collectHyperlinks(resumeData);
+  const hyperlinkRels = [...urlToRid.entries()]
+    .map(([url, rid]) => `  <Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xe(url)}" TargetMode="External"/>`)
+    .join('\n');
+
   zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
+${hyperlinkRels}
 </Relationships>`);
 
   zip.file('word/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -373,6 +431,10 @@ export async function generateDocxBlob(resumeData) {
   </w:docDefaults>
   <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
     <w:name w:val="Normal"/>
+  </w:style>
+  <w:style w:type="character" w:styleId="Hyperlink">
+    <w:name w:val="Hyperlink"/>
+    <w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr>
   </w:style>
 </w:styles>`);
 
@@ -395,7 +457,7 @@ export async function generateDocxBlob(resumeData) {
   <Application>Job Fish</Application>
 </Properties>`);
 
-  zip.file('word/document.xml', buildDocumentXML(resumeData));
+  zip.file('word/document.xml', buildDocumentXML(resumeData, urlToRid));
 
   return zip.generateAsync({
     type:               'blob',
@@ -433,6 +495,33 @@ export function generatePdfBlob(resumeData) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.text(text, pw / 2, y, { align: 'center' });
     y += lh(9) + 1.5;
+  }
+  // Centered line made of alternating plain/clickable segments, e.g.
+  // linkedin label (link) • github label (link). jsPDF's text({align})
+  // can't mix link and non-link runs in one call, so widths are measured
+  // manually and each segment is placed and (if it has a url) wired up via
+  // doc.textWithLink, which is the only jsPDF call that adds a real
+  // clickable annotation — plain doc.text() never does, regardless of color.
+  function contactLinksCentered(segments) {
+    const fs = 9;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(fs);
+    const sep = '   \u2022   ';
+    const segW = segments.map(s => doc.getStringUnitWidth(s.text) * fs / doc.internal.scaleFactor);
+    const sepW = doc.getStringUnitWidth(sep) * fs / doc.internal.scaleFactor;
+    const totalW = segW.reduce((a, b) => a + b, 0) + sepW * (segments.length - 1);
+    let x = pw / 2 - totalW / 2;
+    segments.forEach((s, i) => {
+      if (s.url) {
+        doc.setTextColor(5, 99, 193);
+        doc.textWithLink(s.text, x, y, { url: s.url });
+        doc.setTextColor(0, 0, 0);
+      } else {
+        doc.text(s.text, x, y);
+      }
+      x += segW[i];
+      if (i < segments.length - 1) { doc.text(sep, x, y); x += sepW; }
+    });
+    y += lh(fs) + 1.5;
   }
   function sectionHdr(title) {
     guard(14);
@@ -484,11 +573,18 @@ export function generatePdfBlob(resumeData) {
     doc.text(lines, ml + labelW, y);
     y += Math.max(lines.length, 1) * (lh(9.5) + 0.5) + 1.5;
   }
-  function projHdr(pname, techStack) {
+  function projHdr(pname, techStack, urlLabel, url) {
     guard(10);
     y += 2;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
     doc.text(pname, ml, y);
+    if (url && urlLabel) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      const w = doc.getStringUnitWidth(urlLabel) * 9 / doc.internal.scaleFactor;
+      doc.setTextColor(5, 99, 193);
+      doc.textWithLink(urlLabel, re - w, y, { url });
+      doc.setTextColor(0, 0, 0);
+    }
     y += lh(10) + 1;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.text(techStack, ml, y);
@@ -499,7 +595,10 @@ export function generatePdfBlob(resumeData) {
   // Header
   name(d.name);
   contact(`${d.contact.location}  \u2022  ${d.contact.phone}  \u2022  ${d.contact.email}`);
-  contact(`${d.contact.linkedinLabel}  \u2022  ${d.contact.githubLabel}`);
+  contactLinksCentered([
+    { text: d.contact.linkedinLabel, url: d.contact.linkedinUrl },
+    { text: d.contact.githubLabel,   url: d.contact.githubUrl },
+  ]);
   y += 3;
 
   // Summary
@@ -527,7 +626,7 @@ export function generatePdfBlob(resumeData) {
   // Projects
   sectionHdr('PROJECTS');
   for (const proj of d.projects) {
-    projHdr(proj.name, proj.techStack);
+    projHdr(proj.name, proj.techStack, proj.urlLabel, proj.url);
     for (const b of (d.projectBullets[proj.id] || [])) blt(b);
   }
 
