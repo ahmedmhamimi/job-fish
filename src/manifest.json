@@ -12,7 +12,8 @@
   },
   "permissions": [
     "sidePanel",
-    "storage"
+    "storage",
+    "downloads"
   ],
   "host_permissions": [
     "https://api.groq.com/*"
