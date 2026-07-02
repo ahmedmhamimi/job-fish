@@ -22,6 +22,7 @@ export const STORAGE_KEYS = Object.freeze({
   API_ENDPOINT:         'api_endpoint',
   BASE_RESUME:          'base_resume',
   RESUME_FILENAME:      'resume_filename',     // original uploaded filename (no extension)
+  OUTPUT_FILENAME:      'output_filename',     // user-set override for exported file names
   MATCH_TARGET:         'match_target',
   OPTIMIZATION_HISTORY: 'optimization_history',
 });

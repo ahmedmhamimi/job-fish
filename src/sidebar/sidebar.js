@@ -47,6 +47,7 @@ let currentPayload  = null;
 let isAnalyzing     = false;
 let toastTimer      = null;
 let resumeFilename  = '';   // original uploaded resume's base name (no extension)
+let outputFilename  = '';   // user-set override for export file names; wins over resumeFilename
 let exportBlobs     = null; // { docx: {blob,url,filename,mime}, pdf: {...} } — prebuilt for drag/preview/download
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ async function init() {
   _initSlider(DEFAULTS.MATCH_TARGET);
   _initFileUpload();
   _initBaseResumeField('');
+  _initOutputFilenameField();
   _initAnalyzeButton();
   _initExportDock();
   _initPreviewModal();
@@ -65,11 +67,18 @@ async function init() {
   try {
     const res = await _sendMsg(MSG.GET_SETTINGS);
     if (res?.ok && res.data) {
-      const { hasApiKey, endpoint, baseResume, resumeFilename: savedFilename, matchTarget } = res.data;
+      const {
+        hasApiKey, endpoint, baseResume,
+        resumeFilename: savedFilename,
+        outputFilename: savedOutputFilename,
+        matchTarget,
+      } = res.data;
       _populateModelSelect(endpoint);
       _initSlider(matchTarget);
       _initBaseResumeField(baseResume);
       resumeFilename = savedFilename || '';
+      outputFilename = savedOutputFilename || '';
+      _el('outputFilename').value = outputFilename;
       const hasResume = !!(baseResume && baseResume.trim());
       _updateResumeBanner(hasResume);
       if (hasResume && resumeFilename) {
@@ -238,6 +247,27 @@ function _initBaseResumeField(text) {
   });
 }
 
+// ── Output Filename (manual override, persists like the resume) ───────────────
+function _initOutputFilenameField() {
+  const input  = _el('outputFilename');
+  const save   = _el('saveOutputFilename');
+  const status = _el('outputFilenameStatus');
+
+  save.addEventListener('click', async () => {
+    const val = input.value.trim();
+    save.disabled = true;
+    const res = await _sendMsg(MSG.SAVE_SETTINGS, { outputFilename: val });
+    save.disabled = false;
+    if (res?.ok) {
+      outputFilename = val;
+      _showStatus(status, val ? '✓ Saved' : '✓ Cleared (using resume name)');
+      _showToast(val ? 'Output file name saved' : 'Output file name cleared', 'success');
+    } else {
+      _showStatus(status, '✗ Failed', true);
+    }
+  });
+}
+
 // ── File Upload ───────────────────────────────────────────────────────────────
 function _initFileUpload() {
   const input   = _el('resumeFileInput');
@@ -346,12 +376,22 @@ function _wireExportCard(elId, kind) {
   card.addEventListener('dragstart', e => {
     const item = exportBlobs?.[kind];
     if (!item) { e.preventDefault(); return; }
-    // The "DownloadURL" DataTransfer format is what lets Chrome materialize
-    // this in-memory blob as a real file the instant it's dropped — onto
-    // another webpage's upload dropzone, into a native app, or onto the
-    // desktop — with no separate "Save As" step required.
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('DownloadURL', `${item.mime}:${item.filename}:${item.url}`);
+
+    // Primary mechanism: add a real File object to the drag data store.
+    // This is what makes the file show up in e.dataTransfer.files on the
+    // DROP TARGET's side — which is what web dropzones (Claude, Gemini,
+    // LinkedIn's upload boxes, etc.) actually read in their `drop` handler.
+    e.dataTransfer.items.add(new File([item.blob], item.filename, { type: item.mime }));
+
+    // Secondary mechanism: Chrome's non-standard "DownloadURL" format.
+    // This does NOT populate dataTransfer.files on a web page — it's a
+    // separate, OS-level mechanism Chrome uses to materialize a real file
+    // when the drop target is the desktop or a native file manager/app.
+    // It also requires a data: URI; blob: URLs are silently ignored here.
+    // Kept alongside items.add() so dragging onto the desktop still works.
+    e.dataTransfer.setData('DownloadURL', `${item.mime}:${item.filename}:${item.dragUrl}`);
+
     card.classList.add('is-dragging');
   });
   card.addEventListener('dragend', () => card.classList.remove('is-dragging'));
@@ -367,7 +407,8 @@ function _wireExportCard(elId, kind) {
 async function _prepareExports(payload) {
   _showExportDock('loading');
   try {
-    const blobs = await buildExportBlobs(payload, resumeFilename);
+    const filenameBase = outputFilename || resumeFilename;
+    const blobs = await buildExportBlobs(payload, filenameBase);
     revokeExportBlobs(exportBlobs);
     exportBlobs = blobs;
 

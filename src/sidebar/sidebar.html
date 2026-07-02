@@ -245,6 +245,18 @@
       </div>
     </div>
 
+    <!-- Output Filename -->
+    <div class="field-group">
+      <label class="field-label" for="outputFilename">Output File Name</label>
+      <p class="field-hint">Used for exported DOCX/PDF files. Leave blank to use the uploaded resume's file name.</p>
+      <input class="field-input" type="text" id="outputFilename"
+             placeholder="e.g. Ahmed_Hamimi_Resume" autocomplete="off" spellcheck="false" />
+      <div class="field-actions">
+        <button class="btn btn-secondary btn-sm" id="saveOutputFilename">Save File Name</button>
+        <span class="status-indicator" id="outputFilenameStatus" aria-live="polite"></span>
+      </div>
+    </div>
+
   </div>
 </aside>
 

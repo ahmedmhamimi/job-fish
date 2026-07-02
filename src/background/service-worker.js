@@ -6,7 +6,7 @@
  * - SAVE_API_KEY: validates and stores the API key in chrome.storage.local.
  * - SAVE_RESUME: stores extracted base resume text for LLM context.
  * - GET_SETTINGS: returns all non-secret settings to the sidebar.
- * - SAVE_SETTINGS: persists endpoint model and matchTarget changes.
+ * - SAVE_SETTINGS: persists endpoint model, matchTarget, and outputFilename changes.
  * - RUN_ANALYSIS: orchestrates LLM call, caches result in optimization_history.
  */
 
@@ -85,6 +85,7 @@ async function _handleGetSettings(sendResponse) {
       STORAGE_KEYS.API_ENDPOINT,
       STORAGE_KEYS.BASE_RESUME,
       STORAGE_KEYS.RESUME_FILENAME,
+      STORAGE_KEYS.OUTPUT_FILENAME,
       STORAGE_KEYS.MATCH_TARGET,
       STORAGE_KEYS.OPTIMIZATION_HISTORY,
     ]);
@@ -93,6 +94,7 @@ async function _handleGetSettings(sendResponse) {
       endpoint:       s[STORAGE_KEYS.API_ENDPOINT]          || DEFAULTS.MODEL,
       baseResume:     s[STORAGE_KEYS.BASE_RESUME]           || '',
       resumeFilename: s[STORAGE_KEYS.RESUME_FILENAME]       || '',
+      outputFilename: s[STORAGE_KEYS.OUTPUT_FILENAME]       || '',
       matchTarget:    s[STORAGE_KEYS.MATCH_TARGET]          ?? DEFAULTS.MATCH_TARGET,
       history:        s[STORAGE_KEYS.OPTIMIZATION_HISTORY]  || [],
     }});
@@ -104,6 +106,12 @@ async function _handleSaveSettings(payload, sendResponse) {
     const u = {};
     if (payload?.endpoint    != null) u[STORAGE_KEYS.API_ENDPOINT] = payload.endpoint;
     if (payload?.matchTarget != null) u[STORAGE_KEYS.MATCH_TARGET] = Number(payload.matchTarget);
+    // Empty string is a valid, intentional value here — it means "clear the
+    // override and fall back to the uploaded resume's filename" — so this
+    // checks for null/undefined only, not falsy.
+    if (payload?.outputFilename != null) {
+      u[STORAGE_KEYS.OUTPUT_FILENAME] = String(payload.outputFilename).trim();
+    }
     await chrome.storage.local.set(u);
     sendResponse({ ok: true });
   } catch (e) { sendResponse({ ok: false, error: e.message }); }

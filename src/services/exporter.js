@@ -8,7 +8,10 @@
  *   blobs once, with object URLs and a resolved filename per format. Because
  *   drag-and-drop's `dragstart` handler must call `setData` synchronously, the
  *   blobs/URLs are prepared ahead of time and reused for downloading, dragging,
- *   and previewing.
+ *   and previewing. Each item also carries a `dragUrl` (base64 data: URI) —
+ *   Chrome's "DownloadURL" drag format silently fails to materialize a real
+ *   file when given a blob: URL, so the object URL is used for downloads/
+ *   previews while the data: URI is used specifically for drag-out.
  * - triggerDownload(blob: Blob, filename: string) -> void: Blob-URL download helper.
  * - revokeExportBlobs(blobs: object) -> void: releases object URLs when no longer needed.
  * - downloadDocx(llmOutput, filenameBase?) -> Promise<void>: legacy one-shot helper.
@@ -38,8 +41,18 @@ export async function buildExportBlobs(llmOutput, filenameBase) {
 
   const docx = { blob: docxBlob, mime: DOCX_MIME, filename: `${base}.docx` };
   const pdf  = { blob: pdfBlob,  mime: PDF_MIME,  filename: `${base}.pdf`  };
+
   docx.url = URL.createObjectURL(docx.blob);
   pdf.url  = URL.createObjectURL(pdf.blob);
+
+  // Used only for the DownloadURL drag format — see note above on why
+  // blob: URLs don't work for that.
+  const [docxDragUrl, pdfDragUrl] = await Promise.all([
+    _blobToDataURL(docx.blob),
+    _blobToDataURL(pdf.blob),
+  ]);
+  docx.dragUrl = docxDragUrl;
+  pdf.dragUrl  = pdfDragUrl;
 
   return { docx, pdf };
 }
@@ -78,6 +91,25 @@ export function downloadPdf(llmOutput, filenameBase) {
   const resumeData = buildResumeData(llmOutput);
   const blob       = generatePdfBlob(resumeData);
   triggerDownload(blob, `${_sanitizeBase(filenameBase)}.pdf`);
+}
+
+// ── Blob -> data: URI ─────────────────────────────────────────────────────
+/**
+ * Converts a Blob to a base64 "data:" URI. Required specifically for the
+ * DataTransfer "DownloadURL" drag format: Chrome accepts a blob: URL there
+ * without error, but silently fails to materialize a real file on drop —
+ * both onto the desktop and onto another webpage's dropzone. A data: URI
+ * works reliably in both cases.
+ */
+async function _blobToDataURL(blob) {
+  const buf   = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary  = '';
+  const CHUNK = 0x8000; // avoid call-stack blowups on large files
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${blob.type};base64,${btoa(binary)}`;
 }
 
 // ── Filename resolution ──────────────────────────────────────────────────
