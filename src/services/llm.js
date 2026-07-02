@@ -27,26 +27,26 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 // here as plain strings to avoid importing DOM-context modules into the SW.
 // ---------------------------------------------------------------------------
 const MUTABLE_DEFAULTS_JSON = JSON.stringify({
-  summary: "AI Engineer and Machine Learning specialist with hands-on experience in deep learning, distributed LLM training, computer vision, and end-to-end application development. Demonstrated impact across HPC, healthcare analytics, and mobile AI deployment. Proficient in Python, TensorFlow, PyTorch, and cloud-ready MLOps workflows. Seeking a full-time role where I can build and ship production-grade AI systems.",
+  summary: "AI and machine learning engineer with professional experience in deep learning, computer vision, LLM training and data science. Showcased competence in deep learning frameworks, high performance computing and producing production-ready AI systems.",
   skills: {
-    programmingLanguages: "Python, C++, SQL, NoSQL",
-    mlAI:                 "Deep Learning (CNN, RNN, Transformers), LLM Fine-Tuning, Distributed Training, Computer Vision (YOLO, OpenCV), Ensemble Methods",
-    frameworksTools:      "TensorFlow, PyTorch, Scikit-Learn, TensorFlow Lite, Docker, Git",
-    dataAnalytics:        "Feature Engineering, Statistical Modeling, Power BI, Pandas, NumPy",
-    deploymentMobile:     "Flutter, AWS, Vercel, Google Play deployment"
+    programmingLanguages: "Python, C++, C, SQL",
+    mlDeepLearning:       "PyTorch, TensorFlow, TensorFlow Lite, Scikit-Learn, XGBoost, Computer Vision (YOLOv11), CNN/RNN Architectures, Model Fine-Tuning, Feature Engineering, Hyperparameter Tuning, AutoML",
+    nlpLLMs:              "Large Language Models (LLMs), NLP, Prompt Engineering, Model Fine-Tuning, Distributed Training",
+    dataScienceAnalytics: "Pandas, NumPy, Data Analysis, Data Cleaning, Power BI, Statistical Modeling",
+    mlopsCloud:           "Docker, Git, AWS, Vercel, REST APIs, Model Deployment, CI/CD"
   },
   experienceBullets: {
     vt: [
-      "Optimized LLM training pipelines across 35+ distributed computing nodes, reducing end-to-end runtime by 40% through data, model, and pipeline parallelism.",
-      "Collaborated within an 80 member research team to analyze and improve scalability of distributed computing algorithms for large language models.",
-      "Designed and implemented scalable AI infrastructure for fine-tuning large language models in a high-performance computing environment."
+      "Improved the large language training flow for the 35+ node computational cluster leading to a 40% decrease in the overall time.",
+      "Worked with the 80+ team to improve scalability, efficiency and system performance.",
+      "Implemented improvements in the AI infrastructure to improve the fine-tuning process for large language models and ensure scalability."
     ],
     iti: [
       "Built a cardiovascular risk prediction model achieving 92% accuracy by engineering and optimizing features from over 8,000 patient records, including data cleaning, transformation, and selection to enhance predictive performance.",
-      "Evaluated and deployed ensemble models (Random Forest, XGBoost, SVM), managing the complete model development lifecycle from data preprocessing and feature engineering through training, validation, and final deployment."
+      "Evaluated multiple ensemble techniques from support vector machines to random forests and XGBoost in addition to the complete model development lifecycle pipeline starting from data preprocessing and feature engineering through training, validation, and the final deployment."
     ],
     te: [
-      "Developed and optimized customer churn prediction models reaching 92% classification accuracy, contributing to an estimated 6\u201310% reduction in churn risk.",
+      "Optimized customer churn predictions models to the 92% classification accuracy that led to an estimated decrease of 6-10% in the customer churn risk.",
       "Automated data cleaning and Power BI reporting pipelines, cutting manual reporting time by 50% in comparison to older methods."
     ]
   },
@@ -78,15 +78,13 @@ All company names, dates, GPA, URLs, certifications, awards, and project names a
 Only modify the JSON fields listed under CURRENT MUTABLE FIELDS. Return ALL fields even if unchanged.
 
 # RULES
-1. Only substitute same-category technology terms (e.g. MySQL→PostgreSQL, Vue→React, Jenkins→GitHub Actions). Never add a technology with zero evidence in the resume.
-2. Never invent or inflate metrics, percentages, team sizes, or durations.
-3. Never copy JD phrases verbatim. Paraphrase context while keeping exact tech nouns.
-4. Target {{MATCH_LOWER}}–{{MATCH_UPPER}}% keyword match. Do not over-optimize.
-5. Leave 20–30% of eligible bullets untouched (human-signal patching).
-6. Forbidden words: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower.
-7. Preferred verbs: Refactored, Implemented, Deployed, Benchmarked, Integrated, Configured, Profiled, Abstracted, Decoupled, Audited, Scaffolded, Instrumented, Maintained, Migrated, Patched.
-8. No first-person pronouns (I, me, my, we, our).
-9. The "languagesSpoken" skill field is IMMUTABLE — do not include it in the output skills object.
+1. Target {{MATCH_LOWER}}–{{MATCH_UPPER}}% exact keyword match (no paraphrasing for keywords, I want exact matching, if a keyword is not in the resume, like a technology stack, etc look for where it is closest to be mentioned and mention it, it probably was used anyway in real life). Do not over-optimize or under-optimize, the keywords are any word of technical or strategic or technological meaning no matter how small it is except the obvious (stop words, names, dates, etc).
+2. Never copy JD phrases verbatim. Paraphrase context while keeping exact tech nouns except for the keywords where you have to make sure that the exact required match percentages are met for exact match.
+3. Leave 20–30% of eligible bullets untouched (human-signal patching).
+4. Forbidden words: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower.
+5. Preferred verbs: Refactored, Implemented, Deployed, Benchmarked, Integrated, Configured, Profiled, Abstracted, Decoupled, Audited, Scaffolded, Instrumented, Maintained, Migrated, Patched.
+6. No first-person pronouns (I, me, my, we, our).
+7. The job description title must always be the first thing in the summary as an exact match, like if they are looking for a Data Scientist, the summary must start with Data Scientist, etc.
 
 # CURRENT MUTABLE FIELDS
 ${MUTABLE_DEFAULTS_JSON}

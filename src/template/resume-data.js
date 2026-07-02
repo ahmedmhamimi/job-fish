@@ -45,7 +45,7 @@ export const IMMUTABLE = Object.freeze({
     institution: 'Arab Academy for Science, Technology and Maritime Transport',
     location:    'New Alamein, Egypt',
     period:      'Sep 2022 \u2013 Jul 2026',
-    gpa:         '3.82 / 4.0',
+    gpa:         '3.84 / 4.0',
     rank:        '2nd',
     scholarship: 'Full Merit Scholarship',
   }),
@@ -63,27 +63,27 @@ export const IMMUTABLE = Object.freeze({
 
 // ─── Mutable Defaults ────────────────────────────────────────────────────────
 export const MUTABLE_DEFAULTS = Object.freeze({
-  summary: 'AI Engineer and Machine Learning specialist with hands-on experience in deep learning, distributed LLM training, computer vision, and end-to-end application development. Demonstrated impact across HPC, healthcare analytics, and mobile AI deployment. Proficient in Python, TensorFlow, PyTorch, and cloud-ready MLOps workflows. Seeking a full-time role where I can build and ship production-grade AI systems.',
+  summary: 'AI and machine learning engineer with professional experience in deep learning, computer vision, LLM training and data science. Showcased competence in deep learning frameworks, high performance computing and producing production-ready AI systems.',
   skills: Object.freeze({
-    programmingLanguages: 'Python, C++, SQL, NoSQL',
-    mlAI:                 'Deep Learning (CNN, RNN, Transformers), LLM Fine-Tuning, Distributed Training, Computer Vision (YOLO, OpenCV), Ensemble Methods',
-    frameworksTools:      'TensorFlow, PyTorch, Scikit-Learn, TensorFlow Lite, Docker, Git',
-    dataAnalytics:        'Feature Engineering, Statistical Modeling, Power BI, Pandas, NumPy',
-    deploymentMobile:     'Flutter, AWS, Vercel, Google Play deployment',
-    languagesSpoken:      'Arabic (native), English \u2013 TOEFL iBT 104/120',
+    programmingLanguages:  'Python, C++, C, SQL',
+    mlDeepLearning:        'PyTorch, TensorFlow, TensorFlow Lite, Scikit-Learn, XGBoost, Computer Vision (YOLOv11), CNN/RNN Architectures, Model Fine-Tuning, Feature Engineering, Hyperparameter Tuning, AutoML',
+    nlpLLMs:               'Large Language Models (LLMs), NLP, Prompt Engineering, Model Fine-Tuning, Distributed Training',
+    dataScienceAnalytics:  'Pandas, NumPy, Data Analysis, Data Cleaning, Power BI, Statistical Modeling',
+    mlopsCloud:            'Docker, Git, AWS, Vercel, REST APIs, Model Deployment, CI/CD',
+    languagesSpoken:       'Arabic, English \u2013 TOEFL iBT 104/120',
   }),
   experienceBullets: Object.freeze({
     vt: Object.freeze([
-      'Optimized LLM training pipelines across 35+ distributed computing nodes, reducing end-to-end runtime by 40% through data, model, and pipeline parallelism.',
-      'Collaborated within an 80 member research team to analyze and improve scalability of distributed computing algorithms for large language models.',
-      'Designed and implemented scalable AI infrastructure for fine-tuning large language models in a high-performance computing environment.',
+      'Improved the large language training flow for the 35+ node computational cluster leading to a 40% decrease in the overall time.',
+      'Worked with the 80+ team to improve scalability, efficiency and system performance.',
+      'Implemented improvements in the AI infrastructure to improve the fine-tuning process for large language models and ensure scalability.',
     ]),
     iti: Object.freeze([
       'Built a cardiovascular risk prediction model achieving 92% accuracy by engineering and optimizing features from over 8,000 patient records, including data cleaning, transformation, and selection to enhance predictive performance.',
-      'Evaluated and deployed ensemble models (Random Forest, XGBoost, SVM), managing the complete model development lifecycle from data preprocessing and feature engineering through training, validation, and final deployment.',
+      'Evaluated multiple ensemble techniques from support vector machines to random forests and XGBoost in addition to the complete model development lifecycle pipeline starting from data preprocessing and feature engineering through training, validation, and the final deployment.',
     ]),
     te: Object.freeze([
-      'Developed and optimized customer churn prediction models reaching 92% classification accuracy, contributing to an estimated 6\u201310% reduction in churn risk.',
+      'Optimized customer churn predictions models to the 92% classification accuracy that led to an estimated decrease of 6-10% in the customer churn risk.',
       'Automated data cleaning and Power BI reporting pipelines, cutting manual reporting time by 50% in comparison to older methods.',
     ]),
   }),
@@ -120,10 +120,10 @@ export const PROJECT_LABELS = Object.freeze({
 
 export const SKILL_LABELS = Object.freeze({
   programmingLanguages: 'Programming Languages',
-  mlAI:                 'ML / AI',
-  frameworksTools:      'Frameworks & Tools',
-  dataAnalytics:        'Data & Analytics',
-  deploymentMobile:     'Deployment & Mobile',
+  mlDeepLearning:       'Machine Learning & Deep Learning',
+  nlpLLMs:               'NLP & LLMs',
+  dataScienceAnalytics: 'Data Science & Analytics',
+  mlopsCloud:           'MLOps & Cloud',
 });
 
 // ─── Data Merger ──────────────────────────────────────────────────────────────
@@ -277,12 +277,12 @@ function buildDocumentXML(d) {
 
   // Skills
   parts.push(secHead('TECHNICAL SKILLS'));
-  parts.push(skillLine('Programming Languages', d.skills.programmingLanguages));
-  parts.push(skillLine('ML / AI',               d.skills.mlAI));
-  parts.push(skillLine('Frameworks and Tools',   d.skills.frameworksTools));
-  parts.push(skillLine('Data and Analytics',     d.skills.dataAnalytics));
-  parts.push(skillLine('Deployment and Mobile',  d.skills.deploymentMobile));
-  parts.push(skillLine('Languages Spoken',       d.skills.languagesSpoken));
+  parts.push(skillLine('Programming Languages',           d.skills.programmingLanguages));
+  parts.push(skillLine('Machine Learning & Deep Learning', d.skills.mlDeepLearning));
+  parts.push(skillLine('NLP & LLMs',                       d.skills.nlpLLMs));
+  parts.push(skillLine('Data Science & Analytics',         d.skills.dataScienceAnalytics));
+  parts.push(skillLine('MLOps & Cloud',                    d.skills.mlopsCloud));
+  parts.push(skillLine('Languages',                        d.skills.languagesSpoken));
   parts.push(empty(60));
 
   // Experience
@@ -508,12 +508,12 @@ export function generatePdfBlob(resumeData) {
 
   // Skills
   sectionHdr('TECHNICAL SKILLS');
-  skillRow('Programming Languages', d.skills.programmingLanguages);
-  skillRow('ML / AI',               d.skills.mlAI);
-  skillRow('Frameworks and Tools',  d.skills.frameworksTools);
-  skillRow('Data and Analytics',    d.skills.dataAnalytics);
-  skillRow('Deployment and Mobile', d.skills.deploymentMobile);
-  skillRow('Languages Spoken',      d.skills.languagesSpoken);
+  skillRow('Programming Languages',           d.skills.programmingLanguages);
+  skillRow('Machine Learning & Deep Learning', d.skills.mlDeepLearning);
+  skillRow('NLP & LLMs',                       d.skills.nlpLLMs);
+  skillRow('Data Science & Analytics',         d.skills.dataScienceAnalytics);
+  skillRow('MLOps & Cloud',                    d.skills.mlopsCloud);
+  skillRow('Languages',                        d.skills.languagesSpoken);
 
   // Experience
   sectionHdr('PROFESSIONAL EXPERIENCE');
