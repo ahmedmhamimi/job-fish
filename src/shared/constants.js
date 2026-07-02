@@ -21,6 +21,7 @@ export const STORAGE_KEYS = Object.freeze({
   GROQ_API_KEY:         'groq_api_key',        // storage key kept for backwards compatibility
   API_ENDPOINT:         'api_endpoint',
   BASE_RESUME:          'base_resume',
+  RESUME_FILENAME:      'resume_filename',     // original uploaded filename (no extension)
   MATCH_TARGET:         'match_target',
   OPTIMIZATION_HISTORY: 'optimization_history',
 });

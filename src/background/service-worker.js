@@ -60,10 +60,20 @@ async function _handleSaveApiKey(payload, sendResponse) {
 
 async function _handleSaveResume(payload, sendResponse) {
   try {
-    if (typeof payload !== 'string' || !payload.trim()) {
+    // payload is either a plain string (paste flow, back-compat) or
+    // { text: string, filename?: string } (file-upload flow, carries the
+    // original uploaded filename so exports can be named to match).
+    const text     = typeof payload === 'string' ? payload : payload?.text;
+    const filename = typeof payload === 'string' ? undefined : payload?.filename;
+
+    if (typeof text !== 'string' || !text.trim()) {
       sendResponse({ ok: false, error: 'INVALID_RESUME' }); return;
     }
-    await chrome.storage.local.set({ [STORAGE_KEYS.BASE_RESUME]: payload.trim() });
+    const toSave = { [STORAGE_KEYS.BASE_RESUME]: text.trim() };
+    if (typeof filename === 'string' && filename.trim()) {
+      toSave[STORAGE_KEYS.RESUME_FILENAME] = filename.trim();
+    }
+    await chrome.storage.local.set(toSave);
     sendResponse({ ok: true });
   } catch (e) { sendResponse({ ok: false, error: e.message }); }
 }
@@ -74,15 +84,17 @@ async function _handleGetSettings(sendResponse) {
       STORAGE_KEYS.GROQ_API_KEY,
       STORAGE_KEYS.API_ENDPOINT,
       STORAGE_KEYS.BASE_RESUME,
+      STORAGE_KEYS.RESUME_FILENAME,
       STORAGE_KEYS.MATCH_TARGET,
       STORAGE_KEYS.OPTIMIZATION_HISTORY,
     ]);
     sendResponse({ ok: true, data: {
-      hasApiKey:   Boolean(s[STORAGE_KEYS.GROQ_API_KEY]),
-      endpoint:    s[STORAGE_KEYS.API_ENDPOINT]          || DEFAULTS.MODEL,
-      baseResume:  s[STORAGE_KEYS.BASE_RESUME]           || '',
-      matchTarget: s[STORAGE_KEYS.MATCH_TARGET]          ?? DEFAULTS.MATCH_TARGET,
-      history:     s[STORAGE_KEYS.OPTIMIZATION_HISTORY]  || [],
+      hasApiKey:      Boolean(s[STORAGE_KEYS.GROQ_API_KEY]),
+      endpoint:       s[STORAGE_KEYS.API_ENDPOINT]          || DEFAULTS.MODEL,
+      baseResume:     s[STORAGE_KEYS.BASE_RESUME]           || '',
+      resumeFilename: s[STORAGE_KEYS.RESUME_FILENAME]       || '',
+      matchTarget:    s[STORAGE_KEYS.MATCH_TARGET]          ?? DEFAULTS.MATCH_TARGET,
+      history:        s[STORAGE_KEYS.OPTIMIZATION_HISTORY]  || [],
     }});
   } catch (e) { sendResponse({ ok: false, error: e.message }); }
 }

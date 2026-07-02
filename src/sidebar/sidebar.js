@@ -21,8 +21,12 @@
  * - _renderError(type: string, msg: string, detail?: string) -> void: error card.
  */
 
-import { Engine }           from '../core/engine.js';
-import { downloadDocx, downloadPdf } from '../services/exporter.js';
+import { Engine }             from '../core/engine.js';
+import {
+  buildExportBlobs,
+  revokeExportBlobs,
+  triggerDownload,
+} from '../services/exporter.js';
 import {
   MUTABLE_DEFAULTS,
   EXPERIENCE_LABELS,
@@ -38,10 +42,12 @@ import {
 } from '../shared/constants.js';
 
 // ── Module state ─────────────────────────────────────────────────────────────
-const engine       = new Engine();
-let currentPayload = null;
-let isAnalyzing    = false;
-let toastTimer     = null;
+const engine        = new Engine();
+let currentPayload  = null;
+let isAnalyzing     = false;
+let toastTimer      = null;
+let resumeFilename  = '';   // original uploaded resume's base name (no extension)
+let exportBlobs     = null; // { docx: {blob,url,filename,mime}, pdf: {...} } — prebuilt for drag/preview/download
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function init() {
@@ -53,17 +59,22 @@ async function init() {
   _initFileUpload();
   _initBaseResumeField('');
   _initAnalyzeButton();
-  _initDownloadButtons();
+  _initExportDock();
+  _initPreviewModal();
 
   try {
     const res = await _sendMsg(MSG.GET_SETTINGS);
     if (res?.ok && res.data) {
-      const { hasApiKey, endpoint, baseResume, matchTarget } = res.data;
+      const { hasApiKey, endpoint, baseResume, resumeFilename: savedFilename, matchTarget } = res.data;
       _populateModelSelect(endpoint);
       _initSlider(matchTarget);
       _initBaseResumeField(baseResume);
+      resumeFilename = savedFilename || '';
       const hasResume = !!(baseResume && baseResume.trim());
       _updateResumeBanner(hasResume);
+      if (hasResume && resumeFilename) {
+        _reflectUploadedFilename(resumeFilename);
+      }
       if (hasApiKey) {
         const st = _el('apiKeyStatus');
         st.textContent = '✓ Key saved';
@@ -242,18 +253,15 @@ function _initFileUpload() {
     _showStatus(status, '⏳ Reading…');
     try {
       const text = await _extractDocxText(file);
+      const baseName = file.name.replace(/\.[^./\\]+$/, '').trim();
       _el('baseResume').value = text;
-      const res = await _sendMsg(MSG.SAVE_RESUME, text);
+      const res = await _sendMsg(MSG.SAVE_RESUME, { text, filename: baseName });
       if (res?.ok) {
+        resumeFilename = baseName;
         _showStatus(status, `✓ ${file.name}`);
         _showToast('Resume uploaded and saved', 'success');
         _updateResumeBanner(true);
-        trigger.classList.add('has-file');
-        trigger.innerHTML = `
-          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          ${file.name}`;
+        _reflectUploadedFilename(baseName, trigger);
       } else {
         _showStatus(status, '✗ Save failed', true);
       }
@@ -265,6 +273,17 @@ function _initFileUpload() {
       input.value = '';
     }
   });
+}
+
+/** Reflects the uploaded resume's filename onto the upload trigger button. */
+function _reflectUploadedFilename(baseName, trigger = _el('uploadResumeBtn')) {
+  if (!trigger || !baseName) return;
+  trigger.classList.add('has-file');
+  trigger.innerHTML = `
+    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    ${baseName}.docx`;
 }
 
 /**
@@ -302,27 +321,126 @@ function _initAnalyzeButton() {
   });
 }
 
-// ── Download Buttons ──────────────────────────────────────────────────────────
-function _initDownloadButtons() {
-  _el('downloadDocxBtn').addEventListener('click', async () => {
-    if (!currentPayload) return;
-    try {
-      await downloadDocx(currentPayload);
-      _showToast('DOCX download started', 'success');
-    } catch (err) {
-      _showToast(`DOCX error: ${err.message}`, 'error');
-    }
+// ── Export Dock (download / drag-out / preview) ──────────────────────────────
+function _initExportDock() {
+  _wireExportCard('dragDocx', 'docx');
+  _wireExportCard('dragPdf', 'pdf');
+}
+
+function _wireExportCard(elId, kind) {
+  const card = _el(elId);
+  if (!card) return;
+
+  const activate = () => {
+    const item = exportBlobs?.[kind];
+    if (!item) return;
+    triggerDownload(item.blob, item.filename);
+    _showToast(`${kind.toUpperCase()} download started`, 'success');
+  };
+
+  card.addEventListener('click', activate);
+  card.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
   });
 
-  _el('downloadPdfBtn').addEventListener('click', () => {
-    if (!currentPayload) return;
-    try {
-      downloadPdf(currentPayload);
-      _showToast('PDF download started', 'success');
-    } catch (err) {
-      _showToast(`PDF error: ${err.message}`, 'error');
-    }
+  card.addEventListener('dragstart', e => {
+    const item = exportBlobs?.[kind];
+    if (!item) { e.preventDefault(); return; }
+    // The "DownloadURL" DataTransfer format is what lets Chrome materialize
+    // this in-memory blob as a real file the instant it's dropped — onto
+    // another webpage's upload dropzone, into a native app, or onto the
+    // desktop — with no separate "Save As" step required.
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('DownloadURL', `${item.mime}:${item.filename}:${item.url}`);
+    card.classList.add('is-dragging');
   });
+  card.addEventListener('dragend', () => card.classList.remove('is-dragging'));
+}
+
+/**
+ * Builds fresh DOCX + PDF blobs for the given payload and wires them into
+ * the export dock (download, drag-out, preview). Revokes any previously
+ * built blobs first. Blobs are prepared eagerly — rather than on demand —
+ * because dragstart must call setData synchronously, so there's no chance
+ * to await a blob build in the middle of a drag gesture.
+ */
+async function _prepareExports(payload) {
+  _showExportDock('loading');
+  try {
+    const blobs = await buildExportBlobs(payload, resumeFilename);
+    revokeExportBlobs(exportBlobs);
+    exportBlobs = blobs;
+
+    _el('docxFilenameLabel').textContent = blobs.docx.filename;
+    _el('pdfFilenameLabel').textContent  = blobs.pdf.filename;
+    _el('dragDocx').setAttribute('draggable', 'true');
+    _el('dragPdf').setAttribute('draggable', 'true');
+    _el('dragDocx').removeAttribute('aria-disabled');
+    _el('dragPdf').removeAttribute('aria-disabled');
+    _el('previewBtn').disabled = false;
+    _el('previewBtn').removeAttribute('aria-disabled');
+
+    _showExportDock('ready');
+  } catch (err) {
+    _showExportDock('hidden');
+    _showToast(`Could not prepare export files: ${err.message}`, 'error');
+  }
+}
+
+function _showExportDock(state) {
+  const dock = _el('exportDock');
+  dock.classList.remove('is-hidden', 'is-loading', 'is-ready');
+  if (state === 'hidden') { dock.classList.add('is-hidden'); return; }
+  dock.classList.add(state === 'loading' ? 'is-loading' : 'is-ready');
+}
+
+function _resetExportDock() {
+  revokeExportBlobs(exportBlobs);
+  exportBlobs = null;
+  for (const id of ['dragDocx', 'dragPdf']) {
+    const card = _el(id);
+    card.removeAttribute('draggable');
+    card.setAttribute('aria-disabled', 'true');
+  }
+  const previewBtn = _el('previewBtn');
+  previewBtn.disabled = true;
+  previewBtn.setAttribute('aria-disabled', 'true');
+  _showExportDock('hidden');
+}
+
+// ── Preview Modal ─────────────────────────────────────────────────────────────
+function _initPreviewModal() {
+  const openBtn = _el('previewBtn');
+  const closeBtn = _el('previewClose');
+  const scrim = _el('previewScrim');
+
+  openBtn.addEventListener('click', _openPreview);
+  closeBtn.addEventListener('click', _closePreview);
+  scrim.addEventListener('click', _closePreview);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && _el('previewModal').classList.contains('is-open')) _closePreview();
+  });
+}
+
+function _openPreview() {
+  // PDF is the one format every browser can render natively in an iframe,
+  // so it doubles as the visual preview for both export formats — the
+  // DOCX carries identical content, just OOXML instead of PDF paint ops.
+  const item = exportBlobs?.pdf;
+  if (!item) return;
+  const frame = _el('previewFrame');
+  frame.src = item.url;
+  _el('previewModal').classList.add('is-open');
+  _el('previewScrim').classList.add('is-open');
+  _el('previewModal').removeAttribute('aria-hidden');
+}
+
+function _closePreview() {
+  _el('previewModal').classList.remove('is-open');
+  _el('previewScrim').classList.remove('is-open');
+  _el('previewModal').setAttribute('aria-hidden', 'true');
+  // Drop the src so the embedded PDF viewer fully unloads.
+  _el('previewFrame').src = 'about:blank';
 }
 
 // ── Analysis Flow ─────────────────────────────────────────────────────────────
@@ -341,6 +459,7 @@ async function _runAnalysis() {
     if (res?.ok && res.data) {
       _renderOutput(res.data);
       _showToast('Analysis complete', 'success');
+      _prepareExports(res.data); // fire-and-forget: dock shows its own loading state
     } else {
       _renderError(res?.error || ERROR_TYPES.API_ERROR, res?.message || ERROR_MESSAGES.API_ERROR, res?.detail || res?.raw);
     }
@@ -406,12 +525,8 @@ function _renderOutput(payload) {
     container.appendChild(empty);
   }
 
-  // Enable download buttons
-  for (const id of ['downloadDocxBtn', 'downloadPdfBtn']) {
-    const btn = _el(id);
-    btn.disabled = false;
-    btn.removeAttribute('aria-disabled');
-  }
+  // Export dock (download/drag/preview) is populated separately by
+  // _prepareExports() once blobs are built — see _runAnalysis().
 }
 
 function _buildSummaryBlock(payload) {
@@ -620,11 +735,7 @@ function _clearOutput() {
   _el('outputSection').innerHTML = '';
   currentPayload = null;
   engine.clearState();
-  for (const id of ['downloadDocxBtn', 'downloadPdfBtn']) {
-    const btn = _el(id);
-    btn.disabled = true;
-    btn.setAttribute('aria-disabled', 'true');
-  }
+  _resetExportDock();
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
