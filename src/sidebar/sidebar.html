@@ -247,6 +247,18 @@
       </div>
     </div>
 
+    <!-- Download Folder -->
+    <div class="field-group">
+      <label class="field-label" for="downloadFolder">Download Folder</label>
+      <p class="field-hint">A subfolder under your browser's default Downloads location — e.g. <code>JobFish/Resumes</code>. Extensions can't save outside Downloads, so this can't point to a Desktop folder or anywhere else. Leave blank to save directly into Downloads.</p>
+      <input class="field-input" type="text" id="downloadFolder"
+             placeholder="e.g. JobFish/Resumes" autocomplete="off" spellcheck="false" />
+      <div class="field-actions">
+        <button class="btn btn-secondary btn-sm" id="saveDownloadFolder">Save Folder</button>
+        <span class="status-indicator" id="downloadFolderStatus" aria-live="polite"></span>
+      </div>
+    </div>
+
   </div>
 </aside>
 

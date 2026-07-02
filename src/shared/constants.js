@@ -23,6 +23,7 @@ export const STORAGE_KEYS = Object.freeze({
   BASE_RESUME:          'base_resume',
   RESUME_FILENAME:      'resume_filename',     // original uploaded filename (no extension)
   OUTPUT_FILENAME:      'output_filename',     // user-set override for exported file names
+  DOWNLOAD_FOLDER:      'download_folder',     // subfolder under the browser's default Downloads dir
   MATCH_TARGET:         'match_target',
   OPTIMIZATION_HISTORY: 'optimization_history',
 });

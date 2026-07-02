@@ -48,6 +48,7 @@ let isAnalyzing     = false;
 let toastTimer      = null;
 let resumeFilename  = '';   // original uploaded resume's base name (no extension)
 let outputFilename  = '';   // user-set override for export file names; wins over resumeFilename
+let downloadFolder  = '';   // subfolder under the browser's default Downloads dir
 let exportBlobs     = null; // { docx: {blob,url,filename,mime}, pdf: {...} } — prebuilt for preview/download
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -60,6 +61,7 @@ async function init() {
   _initFileUpload();
   _initBaseResumeField('');
   _initOutputFilenameField();
+  _initDownloadFolderField();
   _initAnalyzeButton();
   _initExportDock();
   _initPreviewModal();
@@ -71,6 +73,7 @@ async function init() {
         hasApiKey, endpoint, baseResume,
         resumeFilename: savedFilename,
         outputFilename: savedOutputFilename,
+        downloadFolder: savedDownloadFolder,
         matchTarget,
       } = res.data;
       _populateModelSelect(endpoint);
@@ -78,7 +81,9 @@ async function init() {
       _initBaseResumeField(baseResume);
       resumeFilename = savedFilename || '';
       outputFilename = savedOutputFilename || '';
+      downloadFolder = savedDownloadFolder || '';
       _el('outputFilename').value = outputFilename;
+      _el('downloadFolder').value = downloadFolder;
       const hasResume = !!(baseResume && baseResume.trim());
       _updateResumeBanner(hasResume);
       if (hasResume && resumeFilename) {
@@ -268,6 +273,27 @@ function _initOutputFilenameField() {
   });
 }
 
+// ── Download Folder (subfolder under default Downloads, persists like resume) ─
+function _initDownloadFolderField() {
+  const input  = _el('downloadFolder');
+  const save   = _el('saveDownloadFolder');
+  const status = _el('downloadFolderStatus');
+
+  save.addEventListener('click', async () => {
+    const val = input.value.trim();
+    save.disabled = true;
+    const res = await _sendMsg(MSG.SAVE_SETTINGS, { downloadFolder: val });
+    save.disabled = false;
+    if (res?.ok) {
+      downloadFolder = val;
+      _showStatus(status, val ? '✓ Saved' : '✓ Cleared (using Downloads root)');
+      _showToast(val ? 'Download folder saved' : 'Download folder cleared', 'success');
+    } else {
+      _showStatus(status, '✗ Failed', true);
+    }
+  });
+}
+
 // ── File Upload ───────────────────────────────────────────────────────────────
 function _initFileUpload() {
   const input   = _el('resumeFileInput');
@@ -361,10 +387,10 @@ function _wireExportCard(elId, kind) {
   const card = _el(elId);
   if (!card) return;
 
-  const activate = () => {
+  const activate = async () => {
     const item = exportBlobs?.[kind];
     if (!item) return;
-    triggerDownload(item.blob, item.filename);
+    await triggerDownload(item.blob, item.filename, downloadFolder);
     _showToast(`${kind.toUpperCase()} download started`, 'success');
   };
 
