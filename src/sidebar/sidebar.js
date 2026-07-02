@@ -48,7 +48,7 @@ let isAnalyzing     = false;
 let toastTimer      = null;
 let resumeFilename  = '';   // original uploaded resume's base name (no extension)
 let outputFilename  = '';   // user-set override for export file names; wins over resumeFilename
-let exportBlobs     = null; // { docx: {blob,url,filename,mime}, pdf: {...} } — prebuilt for drag/preview/download
+let exportBlobs     = null; // { docx: {blob,url,filename,mime}, pdf: {...} } — prebuilt for preview/download
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function init() {
@@ -351,7 +351,7 @@ function _initAnalyzeButton() {
   });
 }
 
-// ── Export Dock (download / drag-out / preview) ──────────────────────────────
+// ── Export Dock (download / preview) ──────────────────────────────────────────
 function _initExportDock() {
   _wireExportCard('dragDocx', 'docx');
   _wireExportCard('dragPdf', 'pdf');
@@ -372,37 +372,12 @@ function _wireExportCard(elId, kind) {
   card.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
   });
-
-  card.addEventListener('dragstart', e => {
-    const item = exportBlobs?.[kind];
-    if (!item) { e.preventDefault(); return; }
-    e.dataTransfer.effectAllowed = 'copy';
-
-    // Primary mechanism: add a real File object to the drag data store.
-    // This is what makes the file show up in e.dataTransfer.files on the
-    // DROP TARGET's side — which is what web dropzones (Claude, Gemini,
-    // LinkedIn's upload boxes, etc.) actually read in their `drop` handler.
-    e.dataTransfer.items.add(new File([item.blob], item.filename, { type: item.mime }));
-
-    // Secondary mechanism: Chrome's non-standard "DownloadURL" format.
-    // This does NOT populate dataTransfer.files on a web page — it's a
-    // separate, OS-level mechanism Chrome uses to materialize a real file
-    // when the drop target is the desktop or a native file manager/app.
-    // It also requires a data: URI; blob: URLs are silently ignored here.
-    // Kept alongside items.add() so dragging onto the desktop still works.
-    e.dataTransfer.setData('DownloadURL', `${item.mime}:${item.filename}:${item.dragUrl}`);
-
-    card.classList.add('is-dragging');
-  });
-  card.addEventListener('dragend', () => card.classList.remove('is-dragging'));
 }
 
 /**
  * Builds fresh DOCX + PDF blobs for the given payload and wires them into
- * the export dock (download, drag-out, preview). Revokes any previously
- * built blobs first. Blobs are prepared eagerly — rather than on demand —
- * because dragstart must call setData synchronously, so there's no chance
- * to await a blob build in the middle of a drag gesture.
+ * the export dock (download, preview). Revokes any previously built blobs
+ * first.
  */
 async function _prepareExports(payload) {
   _showExportDock('loading');
@@ -414,8 +389,6 @@ async function _prepareExports(payload) {
 
     _el('docxFilenameLabel').textContent = blobs.docx.filename;
     _el('pdfFilenameLabel').textContent  = blobs.pdf.filename;
-    _el('dragDocx').setAttribute('draggable', 'true');
-    _el('dragPdf').setAttribute('draggable', 'true');
     _el('dragDocx').removeAttribute('aria-disabled');
     _el('dragPdf').removeAttribute('aria-disabled');
     _el('previewBtn').disabled = false;
@@ -439,9 +412,7 @@ function _resetExportDock() {
   revokeExportBlobs(exportBlobs);
   exportBlobs = null;
   for (const id of ['dragDocx', 'dragPdf']) {
-    const card = _el(id);
-    card.removeAttribute('draggable');
-    card.setAttribute('aria-disabled', 'true');
+    _el(id).setAttribute('aria-disabled', 'true');
   }
   const previewBtn = _el('previewBtn');
   previewBtn.disabled = true;
@@ -566,7 +537,7 @@ function _renderOutput(payload) {
     container.appendChild(empty);
   }
 
-  // Export dock (download/drag/preview) is populated separately by
+  // Export dock (download/preview) is populated separately by
   // _prepareExports() once blobs are built — see _runAnalysis().
 }
 
