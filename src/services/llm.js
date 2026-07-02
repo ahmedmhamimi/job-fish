@@ -78,13 +78,14 @@ All company names, dates, GPA, URLs, certifications, awards, and project names a
 Only modify the JSON fields listed under CURRENT MUTABLE FIELDS. Return ALL fields even if unchanged.
 
 # RULES
-1. Target {{MATCH_LOWER}}–{{MATCH_UPPER}}% exact keyword match (no paraphrasing for keywords, I want exact matching, if a keyword is not in the resume, like a technology stack, etc look for where it is closest to be mentioned and mention it, it probably was used anyway in real life). Do not over-optimize or under-optimize, the keywords are any word of technical or strategic or technological meaning no matter how small it is except the obvious (stop words, names, dates, etc).
+1. Target {{MATCH_LOWER}}–{{MATCH_UPPER}}% exact keyword match (no paraphrasing for keywords, I want exact matching, if a keyword is not in the resume, like a technology stack, etc look for where it is closest to be mentioned and mention it, it probably was used anyway in real life, but don't change the bio data, the company names, etc). Do not over-optimize or under-optimize, the keywords are any word of technical or strategic or technological meaning no matter how small it is except the obvious (stop words, names, dates, etc).
 2. Never copy JD phrases verbatim. Paraphrase context while keeping exact tech nouns except for the keywords where you have to make sure that the exact required match percentages are met for exact match.
-3. Leave 20–30% of eligible bullets untouched (human-signal patching).
-4. Forbidden words: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower.
+3. MANDATORY: at least 20–30% of the 15 total bullets (3 vt + 2 iti + 2 te + 1 autocare + 1 autism + 1 listify + 1 verbatim + 1 profanity + 1 vamimi + 2 asl) must be returned byte-for-byte IDENTICAL to their input value — no rewording, no added clauses, nothing. This is a hard minimum, not a target to approach: with 15 bullets, that means at least 3 must be untouched. Before returning your output, count how many bullets you left unchanged; if fewer than 3, revert your least keyword-critical edits back to the original text until the minimum is met.
+4. Forbidden words — these must NEVER appear anywhere in your output, including inside gerund clauses or in service of keyword-matching: spearheaded, streamlined, leveraged, robust, dynamic, seamless, synergized, revolutionized, utilized, cutting-edge, transformative, impactful, orchestrate, harness, empower. Before returning your output, scan every field for these words; if any appear, rewrite that instance.
 5. Preferred verbs: Refactored, Implemented, Deployed, Benchmarked, Integrated, Configured, Profiled, Abstracted, Decoupled, Audited, Scaffolded, Instrumented, Maintained, Migrated, Patched.
 6. No first-person pronouns (I, me, my, we, our).
-7. The job description title must always be the first thing in the summary as an exact match, like if they are looking for a Data Scientist, the summary must start with Data Scientist, etc.
+7. The summary must open with the exact JD job title as its first characters, verbatim including punctuation/hyphenation as written in the JD (e.g. if the JD says "AI-Engineer", the summary starts with "AI-Engineer", not "AI Engineer"). If the JD gives no single clean title, use the closest explicit title mentioned in the JD's first paragraph.
+8. ANTI-STUFFING RULE: do not append a trailing clause to a bullet or the summary solely to inject a keyword (e.g. do not end a sentence with "...demonstrating X", "...showcasing Y", "...addressing Z", "...contributing to W" where X/Y/Z/W is a keyword bolted on after the sentence's real content already ended). If a keyword doesn't fit naturally into the grammar and substance of an existing sentence, either work it in by genuinely rewriting the sentence's content around it, or leave it out of that bullet and place it elsewhere (e.g. skills). A bullet edited only to graft a keyword-bearing clause onto its end is worse than leaving it unedited — prefer leaving it unedited in that case.
 
 # CURRENT MUTABLE FIELDS
 ${MUTABLE_DEFAULTS_JSON}
@@ -136,9 +137,10 @@ export async function callLLM(jobDescription, matchTarget) {
   if (!apiKey?.trim()) throw { error: ERROR_TYPES.NO_API_KEY };
 
   // Resolve per-model limits.
-  const modelConfig = GROQ_MODELS.find(m => m.value === model);
-  const maxTokens   = modelConfig?.maxTokens ?? DEFAULTS.MAX_TOKENS;
-  const jdLimit     = modelConfig?.jdLimit   ?? 8000;
+  const modelConfig    = GROQ_MODELS.find(m => m.value === model);
+  const maxTokens      = modelConfig?.maxTokens      ?? DEFAULTS.MAX_TOKENS;
+  const jdLimit        = modelConfig?.jdLimit        ?? 8000;
+  const thinkingBudget = modelConfig?.thinkingBudget ?? DEFAULTS.THINKING_BUDGET;
 
   const sysPrompt = _buildSystemPrompt(matchTarget);
   const userMsg   = [
@@ -160,6 +162,9 @@ export async function callLLM(jobDescription, matchTarget) {
         temperature:      DEFAULTS.TEMPERATURE,
         maxOutputTokens:  maxTokens,
         responseMimeType: 'application/json', // forces clean JSON — no markdown fences
+        thinkingConfig:   { thinkingBudget }, // 2.5-series models draw "thinking" tokens
+                                               // from maxOutputTokens; without this, thinking
+                                               // was eating the budget meant for the JSON output.
       },
     }),
   };
@@ -179,7 +184,19 @@ export async function callLLM(jobDescription, matchTarget) {
 
   const data = await response.json();
   // Gemini response shape: candidates[0].content.parts[0].text
-  const raw  = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const candidate   = data?.candidates?.[0];
+  const raw         = candidate?.content?.parts?.[0]?.text;
+  const finishReason = candidate?.finishReason;
+
+  // Distinguish "the model got cut off" (finishReason: MAX_TOKENS) from a
+  // genuinely malformed response. The old code lumped both into
+  // PARSE_FAILURE and blamed a "transient" glitch, which was misleading —
+  // MAX_TOKENS truncation is deterministic given the current token budget
+  // and prompt size, not a one-off fluke.
+  if (finishReason === 'MAX_TOKENS') {
+    throw { error: ERROR_TYPES.TRUNCATED, raw: raw || JSON.stringify(data) };
+  }
+
   if (!raw) throw { error: ERROR_TYPES.PARSE_FAILURE, raw: JSON.stringify(data) };
 
   try {
